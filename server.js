@@ -10,6 +10,7 @@ const publicDir = join(__dirname, 'public');
 loadDotEnv();
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const MOYSKLAD_BASE_URL = 'https://api.moysklad.ru/api/remap/1.2';
 
 const paymentRateRules = {
@@ -108,7 +109,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, HOST, () => {
   console.log(`App is running at http://localhost:${PORT}`);
 });
 
