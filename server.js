@@ -241,7 +241,9 @@ async function createMoySkladDocument(calculation, input) {
     `Цена товара: ${formatMoney(calculation.baseTotal)} сом.`,
     calculation.cashPrepayment ? `Оплата наличными: ${formatMoney(calculation.cashPrepayment)} сом.` : '',
     calculation.transferPrepayment ? `Оплата переводом: ${formatMoney(calculation.transferPrepayment)} сом.` : '',
-    `В рассрочку: ${formatMoney(calculation.installmentBase)} сом.`,
+    `Оплачено: ${formatMoney(getPaidAmount(calculation))} сом.`,
+    `Не оплачено: ${formatMoney(getUnpaidAmount(calculation))} сом.`,
+    `${getRemainderLabel(calculation)}: ${formatMoney(calculation.installmentBase)} сом.`,
     `Комиссия с рассрочки: ${formatMoney(calculation.commission)} сом.`,
     `Итог: ${formatMoney(calculation.finalTotal)} сом.`,
     input.customerName ? `Клиент: ${input.customerName}` : '',
@@ -309,7 +311,31 @@ async function createMoySkladDocument(calculation, input) {
         type: 'attributemetadata',
         mediaType: 'application/json'
       },
-      value: Math.round(documentType === 'retaildemand' ? calculation.finalTotal : calculation.commission)
+      value: Math.round(documentType === 'retaildemand' ? calculation.finalTotal : getUnpaidAmount(calculation))
+    });
+  }
+
+  const paidAttributeHref = getAttributeHref('PAID', documentType);
+  if (paidAttributeHref) {
+    attributes.push({
+      meta: {
+        href: paidAttributeHref,
+        type: 'attributemetadata',
+        mediaType: 'application/json'
+      },
+      value: Math.round(getPaidAmount(calculation))
+    });
+  }
+
+  const unpaidAttributeHref = getAttributeHref('UNPAID', documentType);
+  if (unpaidAttributeHref) {
+    attributes.push({
+      meta: {
+        href: unpaidAttributeHref,
+        type: 'attributemetadata',
+        mediaType: 'application/json'
+      },
+      value: Math.round(getUnpaidAmount(calculation))
     });
   }
 
@@ -344,7 +370,7 @@ async function createMoySkladDocument(calculation, input) {
     throw httpError(response.status, 'МойСклад вернул ошибку при создании документа.', data);
   }
 
-  return {
+  const document = {
     id: data.id,
     name: data.name,
     type: documentType,
@@ -352,6 +378,18 @@ async function createMoySkladDocument(calculation, input) {
     sum: data.sum,
     meta: data.meta
   };
+
+  if (documentType === 'demand' && getPaidAmount(calculation) > 0) {
+    document.payment = await createIncomingPayment(token, {
+      organizationHref,
+      agentHref,
+      demandMeta: data.meta,
+      amount: getPaidAmount(calculation),
+      description: `Оплата по отгрузке ${data.name || ''}`.trim()
+    });
+  }
+
+  return document;
 }
 
 function resolveDocumentType(calculation) {
@@ -361,6 +399,68 @@ function resolveDocumentType(calculation) {
   }
 
   return shouldCreateRetailDemand(calculation) ? 'retaildemand' : 'demand';
+}
+
+function getRemainderLabel(calculation) {
+  const paymentName = String(calculation.paymentType || '').toLowerCase();
+  if (paymentName.includes('долг')) {
+    return 'В долг';
+  }
+  if (calculation.commission > 0) {
+    return 'В рассрочку';
+  }
+  return 'Остаток';
+}
+
+function getPaidAmount(calculation) {
+  return roundMoney(calculation.prepaidTotal || 0);
+}
+
+function getUnpaidAmount(calculation) {
+  return roundMoney(Math.max(0, calculation.finalTotal - getPaidAmount(calculation)));
+}
+
+async function createIncomingPayment(token, input) {
+  const amount = roundMoney(input.amount || 0);
+  if (amount <= 0) {
+    return null;
+  }
+
+  const sum = toMoySkladPrice(amount);
+  const payload = {
+    organization: meta(input.organizationHref, 'organization'),
+    agent: meta(input.agentHref, 'counterparty'),
+    sum,
+    description: input.description || 'Создано автоматически из приложения рассрочки',
+    operations: [
+      {
+        meta: input.demandMeta,
+        linkedSum: sum
+      }
+    ]
+  };
+
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/paymentin`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json;charset=utf-8'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Отгрузка создана, но не удалось создать входящий платеж.', data);
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    sum: data.sum,
+    meta: data.meta
+  };
 }
 
 function shouldCreateRetailDemand(calculation) {

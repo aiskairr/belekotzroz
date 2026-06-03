@@ -34,9 +34,11 @@ const summary = {
   productLabel: document.querySelector('#productLabel'),
   paymentTypeLabel: document.querySelector('#paymentTypeLabel'),
   prepaidTotal: document.querySelector('#prepaidTotal'),
+  installmentBaseLabel: document.querySelector('#installmentBaseLabel'),
   installmentBase: document.querySelector('#installmentBase'),
   commission: document.querySelector('#commission'),
   finalTotal: document.querySelector('#finalTotal'),
+  monthlyPaymentLabel: document.querySelector('#monthlyPaymentLabel'),
   monthlyPayment: document.querySelector('#monthlyPayment')
 };
 
@@ -196,7 +198,8 @@ form.addEventListener('submit', async (event) => {
 
     const documentName = data.document?.name ? ` №${data.document.name}` : '';
     const documentTitle = getDocumentTitle(data.document?.type);
-    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.`, 'success');
+    const paymentText = data.document?.payment?.name ? ` Входящий платеж №${data.document.payment.name} создан.` : '';
+    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}`, 'success');
   } catch (error) {
     setStatus(error.message, 'error');
   } finally {
@@ -652,9 +655,11 @@ function renderEmptyCalculation() {
   summary.productLabel.textContent = 'Добавьте товар';
   summary.paymentTypeLabel.textContent = getSelectedPaymentType()?.name || '';
   summary.prepaidTotal.textContent = formatSom(0);
+  summary.installmentBaseLabel.textContent = 'Остаток';
   summary.installmentBase.textContent = formatSom(0);
   summary.commission.textContent = formatSom(0);
   summary.finalTotal.textContent = formatSom(0);
+  summary.monthlyPaymentLabel.textContent = 'Платеж в месяц';
   summary.monthlyPayment.textContent = formatSom(0);
 }
 
@@ -663,9 +668,11 @@ function renderCalculation(data) {
   summary.productLabel.textContent = data.items?.length > 1 ? `${data.items.length} товара` : data.items?.[0]?.productName || 'Выберите товар';
   summary.paymentTypeLabel.textContent = data.paymentType;
   summary.prepaidTotal.textContent = formatSom(data.prepaidTotal);
+  summary.installmentBaseLabel.textContent = getRemainderLabel(data);
   summary.installmentBase.textContent = formatSom(data.installmentBase);
   summary.commission.textContent = formatSom(data.commission);
   summary.finalTotal.textContent = formatSom(data.finalTotal);
+  summary.monthlyPaymentLabel.textContent = isDebtPayment(data) ? 'К оплате потом' : 'Платеж в месяц';
   summary.monthlyPayment.textContent = formatSom(data.monthlyPayment);
 }
 
@@ -779,6 +786,20 @@ function getDocumentTitle(type) {
     return 'Отгрузка';
   }
   return 'Документ';
+}
+
+function getRemainderLabel(data) {
+  if (isDebtPayment(data)) {
+    return 'В долг';
+  }
+  if (Number(data?.commission || 0) > 0) {
+    return 'В рассрочку';
+  }
+  return 'Остаток';
+}
+
+function isDebtPayment(data) {
+  return String(data?.paymentType || '').toLowerCase().includes('долг');
 }
 
 function formatApiError(data, fallback) {
