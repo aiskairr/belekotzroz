@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Рассрочка в МойСклад</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <section class="panel">
+        <div class="heading">
+          <p class="eyebrow">Расчет рассрочки</p>
+          <h1>Создание отгрузки в МойСклад</h1>
+        </div>
+
+        <form id="orderForm" class="form">
+          <label class="wide">
+            <span>Товар из МойСклад</span>
+            <select id="product" name="product" required></select>
+          </label>
+
+          <label class="wide">
+            <span>Поиск товара</span>
+            <input id="productSearch" name="productSearch" placeholder="Название или код товара">
+          </label>
+
+          <label>
+            <span>Цена товара</span>
+            <input id="productPrice" name="productPrice" inputmode="decimal" value="100000" required>
+          </label>
+
+          <label>
+            <span>Количество</span>
+            <input id="quantity" name="quantity" type="number" min="1" step="1" value="1" required>
+          </label>
+
+          <label class="wide">
+            <span>Тип оплаты</span>
+            <select id="paymentType" name="paymentType"></select>
+          </label>
+
+          <label class="wide">
+            <span>Сотрудник</span>
+            <select id="employee" name="employee"></select>
+          </label>
+
+          <label>
+            <span>Имя клиента</span>
+            <input id="customerName" name="customerName" placeholder="Например: Айбек">
+          </label>
+
+          <label>
+            <span>Телефон</span>
+            <input id="customerPhone" name="customerPhone" placeholder="+996 ...">
+          </label>
+
+          <label class="wide">
+            <span>Адрес клиента</span>
+            <input id="customerAddress" name="customerAddress" placeholder="Город, улица, дом">
+          </label>
+
+          <button id="submitButton" type="submit">Создать отгрузку</button>
+        </form>
+      </section>
+
+      <section class="summary" aria-live="polite">
+        <div>
+          <span>Сумма товара</span>
+          <strong id="baseTotal">100 000,00 сом</strong>
+        </div>
+        <div>
+          <span>Позиция</span>
+          <strong id="productLabel">Загрузка...</strong>
+        </div>
+        <div>
+          <span>Тип оплаты</span>
+          <strong id="paymentTypeLabel">M+ (6 мес)</strong>
+        </div>
+        <hr>
+        <div>
+          <span>Комиссия</span>
+          <strong id="commission">10 000,00 сом</strong>
+        </div>
+        <div>
+          <span>Итог</span>
+          <strong id="finalTotal">110 000,00 сом</strong>
+        </div>
+        <div>
+          <span>Платеж в месяц</span>
+          <strong id="monthlyPayment">18 333,33 сом</strong>
+        </div>
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
