@@ -14,6 +14,43 @@ body {
   min-height: 100vh;
 }
 
+.branch-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.branch-panel {
+  width: min(560px, 100%);
+  background: #fff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(34, 48, 74, 0.08);
+  padding: 32px;
+}
+
+.branch-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.branch-button {
+  grid-column: auto;
+}
+
+.branch-label {
+  margin: 10px 0 0;
+  color: #536071;
+  font-weight: 650;
+}
+
+.app.hidden {
+  display: none;
+}
+
 .app {
   display: grid;
   grid-template-columns: minmax(320px, 1.15fr) minmax(280px, 0.85fr);
@@ -67,6 +104,38 @@ label {
   font-weight: 650;
 }
 
+.client-mode {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 0;
+}
+
+.client-mode legend {
+  padding: 0 6px;
+  color: #536071;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.client-mode label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.client-mode input {
+  width: 16px;
+  height: 16px;
+}
+
+.hidden {
+  display: none;
+}
+
 .wide {
   grid-column: 1 / -1;
 }
@@ -101,9 +170,59 @@ button {
   cursor: pointer;
 }
 
+.secondary-button {
+  background: #eef4fb;
+  color: #173f6d;
+  border: 1px solid #bdd3ea;
+}
+
 button:disabled {
   cursor: wait;
   opacity: 0.66;
+}
+
+.items-list {
+  display: grid;
+  gap: 8px;
+}
+
+.item-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(110px, 0.35fr) minmax(90px, 0.25fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  padding: 10px;
+  background: #f8fafc;
+}
+
+.item-row span {
+  color: #647084;
+  font-size: 14px;
+}
+
+.item-row label {
+  gap: 6px;
+}
+
+.remove-item {
+  width: 36px;
+  height: 36px;
+  grid-column: auto;
+  background: #fff1f0;
+  color: #b42318;
+  border: 1px solid #f3c6c2;
+}
+
+@media (max-width: 720px) {
+  .item-row {
+    grid-template-columns: 1fr;
+  }
+
+  .remove-item {
+    width: 100%;
+  }
 }
 
 .summary {
@@ -150,6 +269,17 @@ hr {
 
 .status.error {
   color: #b42318;
+}
+
+.inline-warning {
+  margin: 0;
+  border: 1px solid #fedf89;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fffaeb;
+  color: #93370d;
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 .status.success {

@@ -7,18 +7,29 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <section id="branchScreen" class="branch-screen">
+      <div class="branch-panel">
+        <p class="eyebrow">Выбор филиала</p>
+        <h1>Где оформить документ?</h1>
+        <div class="branch-actions">
+          <button class="branch-button" type="button" data-branch="ayu">Аю-Гранд</button>
+          <button class="branch-button" type="button" data-branch="besh">Беш-Сары</button>
+        </div>
+      </div>
+    </section>
+
     <main class="app">
       <section class="panel">
         <div class="heading">
           <p class="eyebrow">Расчет рассрочки</p>
-          <h1>Создание отгрузки в МойСклад</h1>
+          <h1>Создание документа в МойСклад</h1>
+          <p id="branchLabel" class="branch-label"></p>
         </div>
 
         <form id="orderForm" class="form">
-          <label class="wide">
-            <span>Товар из МойСклад</span>
-            <select id="product" name="product" required></select>
-          </label>
+          <button id="addItemButton" class="secondary-button" type="button">Добавить товар в документ</button>
+
+          <div id="itemsList" class="items-list wide"></div>
 
           <label class="wide">
             <span>Поиск товара</span>
@@ -26,13 +37,13 @@
           </label>
 
           <label>
-            <span>Цена товара</span>
-            <input id="productPrice" name="productPrice" inputmode="decimal" value="100000" required>
+            <span>Наличными сразу</span>
+            <input id="cashPrepayment" name="cashPrepayment" inputmode="decimal" value="0">
           </label>
 
           <label>
-            <span>Количество</span>
-            <input id="quantity" name="quantity" type="number" min="1" step="1" value="1" required>
+            <span>Переводом сразу</span>
+            <input id="transferPrepayment" name="transferPrepayment" inputmode="decimal" value="0">
           </label>
 
           <label class="wide">
@@ -45,14 +56,43 @@
             <select id="employee" name="employee"></select>
           </label>
 
+          <label class="wide">
+            <span>Точка продаж</span>
+            <select id="store" name="store"></select>
+          </label>
+
+          <fieldset class="wide client-mode">
+            <legend>Клиент</legend>
+            <label>
+              <input type="radio" name="customerMode" value="new" checked>
+              <span>Новый клиент</span>
+            </label>
+            <label>
+              <input type="radio" name="customerMode" value="existing">
+              <span>Старый клиент</span>
+            </label>
+          </fieldset>
+
+          <label id="customerSearchField" class="wide hidden">
+            <span>Поиск старого клиента</span>
+            <input id="customerSearch" name="customerSearch" placeholder="Имя или телефон клиента">
+          </label>
+
+          <label id="existingCustomerField" class="wide hidden">
+            <span>Старый клиент</span>
+            <select id="existingCustomer" name="existingCustomer"></select>
+          </label>
+
+          <button id="addMissingCustomerButton" class="secondary-button hidden" type="button">Добавить как нового клиента</button>
+
           <label>
             <span>Имя клиента</span>
-            <input id="customerName" name="customerName" placeholder="Например: Айбек">
+            <input id="customerName" name="customerName" placeholder="Например: Айбек" required>
           </label>
 
           <label>
             <span>Телефон</span>
-            <input id="customerPhone" name="customerPhone" placeholder="+996 ...">
+            <input id="customerPhone" name="customerPhone" placeholder="+996 ..." required>
           </label>
 
           <label class="wide">
@@ -60,7 +100,9 @@
             <input id="customerAddress" name="customerAddress" placeholder="Город, улица, дом">
           </label>
 
-          <button id="submitButton" type="submit">Создать отгрузку</button>
+          <p id="customerDuplicateWarning" class="inline-warning wide hidden"></p>
+
+          <button id="submitButton" type="submit">Создать документ</button>
         </form>
       </section>
 
@@ -77,11 +119,16 @@
           <span>Тип оплаты</span>
           <strong id="paymentTypeLabel">M+ (6 мес)</strong>
         </div>
-        <hr>
         <div>
-          <span>Комиссия</span>
-          <strong id="commission">10 000,00 сом</strong>
+          <span>Оплачено сразу</span>
+          <strong id="prepaidTotal">0,00 сом</strong>
         </div>
+        <div>
+          <span>В рассрочку</span>
+          <strong id="installmentBase">100 000,00 сом</strong>
+        </div>
+        <hr>
+        <strong id="commission" hidden>10 000,00 сом</strong>
         <div>
           <span>Итог</span>
           <strong id="finalTotal">110 000,00 сом</strong>
