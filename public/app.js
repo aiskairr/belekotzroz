@@ -7,6 +7,7 @@ const employeeSelect = document.querySelector('#employee');
 const storeSelect = document.querySelector('#store');
 const existingCustomerSelect = document.querySelector('#existingCustomer');
 const addItemButton = document.querySelector('#addItemButton');
+const addItemBottomButton = document.querySelector('#addItemBottomButton');
 const addMissingCustomerButton = document.querySelector('#addMissingCustomerButton');
 const itemsList = document.querySelector('#itemsList');
 const submitButton = document.querySelector('#submitButton');
@@ -18,6 +19,9 @@ const fields = {
   customerSearch: document.querySelector('#customerSearch'),
   customerSearchField: document.querySelector('#customerSearchField'),
   existingCustomerField: document.querySelector('#existingCustomerField'),
+  cashPrepaymentField: document.querySelector('#cashPrepaymentField'),
+  transferPrepaymentField: document.querySelector('#transferPrepaymentField'),
+  paymentTypeField: document.querySelector('#paymentTypeField'),
   cashPrepayment: document.querySelector('#cashPrepayment'),
   transferPrepayment: document.querySelector('#transferPrepayment'),
   customerName: document.querySelector('#customerName'),
@@ -84,9 +88,23 @@ form.addEventListener('input', () => {
   updateCalculation();
 });
 
+form.addEventListener('change', (event) => {
+  if (event.target?.name === 'customerMode') {
+    renderCustomerMode();
+    scheduleDuplicateCustomerCheck();
+  }
+});
+
 paymentTypeSelect.addEventListener('change', () => {
   updateCalculation();
 });
+
+for (const radio of document.querySelectorAll('input[name="paymentScenario"]')) {
+  radio.addEventListener('change', () => {
+    applyPaymentScenario();
+    updateCalculation();
+  });
+}
 
 employeeSelect.addEventListener('change', () => {
   updateCalculation();
@@ -99,6 +117,12 @@ storeSelect.addEventListener('change', () => {
 addItemButton.addEventListener('click', () => {
   addItemRow();
 });
+
+if (addItemBottomButton) {
+  addItemBottomButton.addEventListener('click', () => {
+    addItemRow();
+  });
+}
 
 existingCustomerSelect.addEventListener('change', () => {
   applySelectedCustomer();
@@ -370,7 +394,7 @@ function refreshItemProductOptions() {
 
 function renderPaymentTypes() {
   paymentTypeSelect.innerHTML = '';
-  for (const paymentType of paymentTypes) {
+  for (const paymentType of getVisiblePaymentTypes()) {
     const option = document.createElement('option');
     option.value = paymentType.href;
     option.dataset.name = paymentType.name;
@@ -381,6 +405,53 @@ function renderPaymentTypes() {
   const defaultType = paymentTypes.find((paymentType) => paymentType.name === 'M+ (6 мес)');
   if (defaultType) {
     paymentTypeSelect.value = defaultType.href;
+  }
+  applyPaymentScenario();
+}
+
+function applyPaymentScenario() {
+  if (!paymentTypes.length) {
+    return;
+  }
+
+  const scenario = getPaymentScenario();
+  const currentHref = paymentTypeSelect.value;
+  paymentTypeSelect.innerHTML = '';
+  for (const paymentType of getVisiblePaymentTypes()) {
+    const option = document.createElement('option');
+    option.value = paymentType.href;
+    option.dataset.name = paymentType.name;
+    option.dataset.rate = String(paymentType.rate ?? 0);
+    option.textContent = paymentType.name;
+    paymentTypeSelect.append(option);
+  }
+  if (getVisiblePaymentTypes().some((paymentType) => paymentType.href === currentHref)) {
+    paymentTypeSelect.value = currentHref;
+  }
+
+  fields.transferPrepayment.value = '0';
+  fields.transferPrepaymentField.classList.add('hidden');
+  fields.cashPrepaymentField.classList.toggle('hidden', scenario !== 'mixed' && scenario !== 'debt');
+  fields.paymentTypeField.classList.toggle('hidden', scenario === 'cash' || scenario === 'debt');
+
+  if (scenario === 'cash') {
+    fields.cashPrepayment.value = '0';
+    selectPaymentType(findCashPaymentType());
+    return;
+  }
+
+  if (scenario === 'debt') {
+    selectPaymentType(findDebtPaymentType());
+    return;
+  }
+
+  if (scenario === 'bank') {
+    fields.cashPrepayment.value = '0';
+  }
+
+  const selected = getSelectedPaymentType();
+  if (!selected || !isBankPaymentType(selected)) {
+    selectPaymentType(paymentTypes.find(isBankPaymentType));
   }
 }
 
@@ -636,6 +707,47 @@ function getSelectedPaymentType() {
   return paymentTypes.find((paymentType) => paymentType.href === paymentTypeSelect.value);
 }
 
+function getVisiblePaymentTypes() {
+  const scenario = getPaymentScenario();
+  if (scenario === 'bank' || scenario === 'mixed') {
+    return paymentTypes.filter(isBankPaymentType);
+  }
+  if (scenario === 'cash') {
+    return paymentTypes.filter(isCashPaymentType);
+  }
+  if (scenario === 'debt') {
+    return paymentTypes.filter(isDebtPaymentType);
+  }
+  return paymentTypes;
+}
+
+function selectPaymentType(paymentType) {
+  if (paymentType) {
+    paymentTypeSelect.value = paymentType.href;
+  }
+}
+
+function findCashPaymentType() {
+  return paymentTypes.find(isCashPaymentType) || paymentTypes[0];
+}
+
+function findDebtPaymentType() {
+  return paymentTypes.find(isDebtPaymentType) || paymentTypes[0];
+}
+
+function isCashPaymentType(paymentType) {
+  const name = String(paymentType?.name || '').toLowerCase();
+  return name.includes('налич') || name.includes('cash') || name.includes('qr') || name.includes('карта');
+}
+
+function isDebtPaymentType(paymentType) {
+  return String(paymentType?.name || '').toLowerCase().includes('долг');
+}
+
+function isBankPaymentType(paymentType) {
+  return !isCashPaymentType(paymentType) && !isDebtPaymentType(paymentType);
+}
+
 function getSelectedEmployee() {
   return employees.find((employee) => employee.href === employeeSelect.value);
 }
@@ -650,6 +762,10 @@ function getSelectedCustomer() {
 
 function getCustomerMode() {
   return document.querySelector('input[name="customerMode"]:checked')?.value || 'new';
+}
+
+function getPaymentScenario() {
+  return document.querySelector('input[name="paymentScenario"]:checked')?.value || 'cash';
 }
 
 function getDocumentTitle(type) {

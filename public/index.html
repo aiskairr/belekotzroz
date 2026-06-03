@@ -27,26 +27,48 @@
         </div>
 
         <form id="orderForm" class="form">
-          <button id="addItemButton" class="secondary-button" type="button">Добавить товар в документ</button>
 
           <div id="itemsList" class="items-list wide"></div>
 
-          <label class="wide">
+           <label class="wide">
             <span>Поиск товара</span>
             <input id="productSearch" name="productSearch" placeholder="Название или код товара">
           </label>
+          <button id="addItemButton" class="secondary-button" type="button">Добавить товар +</button>
 
-          <label>
+         
+
+          <fieldset class="wide payment-scenario">
+            <legend>Оплата</legend>
+            <label>
+              <input type="radio" name="paymentScenario" value="cash" checked>
+              <span>Наличными</span>
+            </label>
+            <label>
+              <input type="radio" name="paymentScenario" value="bank">
+              <span>Банк</span>
+            </label>
+            <label>
+              <input type="radio" name="paymentScenario" value="mixed">
+              <span>Смешанная</span>
+            </label>
+            <label>
+              <input type="radio" name="paymentScenario" value="debt">
+              <span>Долг</span>
+            </label>
+          </fieldset>
+
+          <label id="cashPrepaymentField">
             <span>Наличными сразу</span>
             <input id="cashPrepayment" name="cashPrepayment" inputmode="decimal" value="0">
           </label>
 
-          <label>
+          <label id="transferPrepaymentField">
             <span>Переводом сразу</span>
             <input id="transferPrepayment" name="transferPrepayment" inputmode="decimal" value="0">
           </label>
 
-          <label class="wide">
+          <label id="paymentTypeField" class="wide">
             <span>Тип оплаты</span>
             <select id="paymentType" name="paymentType"></select>
           </label>

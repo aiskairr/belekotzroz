@@ -366,16 +366,12 @@ function resolveDocumentType(calculation) {
 function shouldCreateRetailDemand(calculation) {
   const paymentName = String(calculation.paymentType || '').toLowerCase();
   const debtPayment = paymentName.includes('долг');
-  const fullyPrepaid = calculation.prepaidTotal >= calculation.baseTotal;
-  const noInstallmentRemainder = calculation.installmentBase <= 0;
-  const noBankCommission = calculation.commission <= 0;
-  const cashLikePayment = paymentName.includes('налич') || paymentName.includes('cash') || paymentName.includes('карта') || paymentName.includes('qr');
 
   if (debtPayment) {
     return false;
   }
 
-  return fullyPrepaid || (cashLikePayment && noBankCommission) || (noInstallmentRemainder && noBankCommission && cashLikePayment);
+  return true;
 }
 
 function getOrderItems(input) {
