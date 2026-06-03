@@ -57,6 +57,7 @@ employeeSelect.addEventListener('change', () => {
 });
 
 productSelect.addEventListener('change', () => {
+  applySelectedProductPrice();
   updateCalculation();
 });
 
@@ -128,6 +129,7 @@ async function loadProducts(search = '') {
 
   products = data.products;
   renderProducts();
+  applySelectedProductPrice();
   updateCalculation();
 }
 
@@ -149,9 +151,18 @@ function renderProducts() {
     option.value = product.href;
     option.dataset.type = product.type;
     option.dataset.name = product.name;
+    option.dataset.price = String(product.price || 0);
     option.textContent = product.code ? `${product.name} (${product.code})` : product.name;
     productSelect.append(option);
   }
+}
+
+function applySelectedProductPrice() {
+  const selectedProduct = getSelectedProduct();
+  if (!selectedProduct || !selectedProduct.price) {
+    return;
+  }
+  fields.productPrice.value = String(selectedProduct.price);
 }
 
 function renderPaymentTypes() {

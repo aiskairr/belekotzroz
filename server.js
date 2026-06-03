@@ -380,9 +380,18 @@ async function getMoySkladProducts(search) {
     id: product.id,
     name: product.name,
     code: product.code,
+    price: getProductPrice(product),
     href: product.meta.href,
     type: product.meta.type
   }));
+}
+
+function getProductPrice(product) {
+  const salePrice = Array.isArray(product.salePrices) ? product.salePrices[0] : null;
+  if (!salePrice || !Number.isFinite(Number(salePrice.value))) {
+    return 0;
+  }
+  return roundMoney(Number(salePrice.value) / 100);
 }
 
 async function getMoySkladPaymentTypes() {
