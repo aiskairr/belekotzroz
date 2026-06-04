@@ -185,6 +185,9 @@ function calculate(input) {
   const installmentBase = roundMoney(baseTotal - prepaidTotal);
   const commission = roundMoney(installmentBase * rate);
   const finalTotal = baseTotal;
+  const netTotal = roundMoney(baseTotal - commission);
+  const costTotal = roundMoney(items.reduce((sum, item) => sum + item.costTotal, 0));
+  const netProfit = roundMoney(netTotal - costTotal);
   const monthlyPayment = months > 0 ? roundMoney(installmentBase / months) : 0;
 
   const result = {
@@ -200,6 +203,9 @@ function calculate(input) {
     installmentBase,
     commission,
     finalTotal,
+    netTotal,
+    costTotal,
+    netProfit,
     monthlyPayment,
     currency: 'KGS'
   };
@@ -235,21 +241,7 @@ async function createMoySkladDocument(calculation, input) {
     throw httpError(400, 'Выберите товар для розничной продажи.');
   }
 
-  const description = [
-    `Тип оплаты: ${calculation.paymentType}.`,
-    ...calculation.items.map((item) => `Товар: ${item.productName} - ${item.quantity} x ${formatMoney(item.productPrice)} сом.`),
-    `Цена товара: ${formatMoney(calculation.baseTotal)} сом.`,
-    calculation.cashPrepayment ? `Оплата наличными: ${formatMoney(calculation.cashPrepayment)} сом.` : '',
-    calculation.transferPrepayment ? `Оплата переводом: ${formatMoney(calculation.transferPrepayment)} сом.` : '',
-    `Оплачено: ${formatMoney(getPaidAmount(calculation))} сом.`,
-    `Не оплачено: ${formatMoney(getUnpaidAmount(calculation))} сом.`,
-    `${getRemainderLabel(calculation)}: ${formatMoney(calculation.installmentBase)} сом.`,
-    `Комиссия с рассрочки: ${formatMoney(calculation.commission)} сом.`,
-    `Итог: ${formatMoney(calculation.finalTotal)} сом.`,
-    input.customerName ? `Клиент: ${input.customerName}` : '',
-    input.customerPhone ? `Телефон: ${input.customerPhone}` : '',
-    input.customerAddress ? `Адрес: ${input.customerAddress}` : ''
-  ].filter(Boolean).join('\n');
+  const description = buildDocumentDescription(calculation);
 
   const payload = {
     organization: meta(organizationHref, 'organization'),
@@ -311,7 +303,7 @@ async function createMoySkladDocument(calculation, input) {
         type: 'attributemetadata',
         mediaType: 'application/json'
       },
-      value: Math.round(documentType === 'retaildemand' ? calculation.finalTotal : getUnpaidAmount(calculation))
+      value: Math.round(getReceivableAmount(calculation, documentType))
     });
   }
 
@@ -348,6 +340,18 @@ async function createMoySkladDocument(calculation, input) {
         mediaType: 'application/json'
       },
       value: `${formatMoney(calculation.commission)} сом`
+    });
+  }
+
+  const netProfitAttributeHref = getAttributeHref('NET_PROFIT', documentType);
+  if (netProfitAttributeHref) {
+    attributes.push({
+      meta: {
+        href: netProfitAttributeHref,
+        type: 'attributemetadata',
+        mediaType: 'application/json'
+      },
+      value: Math.round(calculation.netProfit)
     });
   }
 
@@ -412,12 +416,48 @@ function getRemainderLabel(calculation) {
   return 'Остаток';
 }
 
+function buildDocumentDescription(calculation) {
+  const paymentName = String(calculation.paymentType || '');
+  const paymentNameLower = paymentName.toLowerCase();
+  const paidAmount = getPaidAmount(calculation);
+  const unpaidAmount = getUnpaidAmount(calculation);
+  const isDebt = paymentNameLower.includes('долг');
+  const isMixed = paidAmount > 0 && unpaidAmount > 0;
+
+  const lines = isMixed && !isDebt
+    ? []
+    : [`Тип оплаты: ${paymentName}.`];
+
+  if (isDebt) {
+    lines.push(`Оплачено: ${formatMoney(paidAmount)} сом.`);
+    lines.push(`Не оплачено: ${formatMoney(unpaidAmount)} сом.`);
+    lines.push(`Долг: ${formatMoney(unpaidAmount)} сом.`);
+  } else if (isMixed) {
+    lines.push(`Наличными: ${formatMoney(paidAmount)} сом.`);
+    lines.push(`${paymentName}: ${formatMoney(unpaidAmount)} сом.`);
+  }
+
+  return lines.slice(0, 4).join('\n');
+}
+
 function getPaidAmount(calculation) {
   return roundMoney(calculation.prepaidTotal || 0);
 }
 
 function getUnpaidAmount(calculation) {
   return roundMoney(Math.max(0, calculation.finalTotal - getPaidAmount(calculation)));
+}
+
+function getReceivableAmount(calculation, documentType) {
+  if (calculation.commission > 0) {
+    return calculation.netTotal;
+  }
+
+  if (documentType === 'retaildemand') {
+    return calculation.finalTotal;
+  }
+
+  return getUnpaidAmount(calculation);
 }
 
 async function createIncomingPayment(token, input) {
@@ -487,6 +527,7 @@ function getOrderItems(input) {
 
   return rawItems.map((item, index) => {
     const productPrice = toMoney(item.productPrice);
+    const productCost = toMoney(item.productCost || 0);
     const quantity = Number(item.quantity || 1);
     const assortmentHref = item.assortmentHref;
     const assortmentType = item.assortmentType || process.env.MOYSKLAD_ASSORTMENT_TYPE || 'product';
@@ -506,8 +547,10 @@ function getOrderItems(input) {
       assortmentHref,
       assortmentType,
       productPrice,
+      productCost,
       quantity,
-      lineTotal: roundMoney(productPrice * quantity)
+      lineTotal: roundMoney(productPrice * quantity),
+      costTotal: roundMoney(productCost * quantity)
     };
   });
 }
@@ -733,10 +776,22 @@ async function getMoySkladProducts(search) {
     id: product.id,
     name: product.name,
     code: product.code,
+    article: product.article || '',
+    externalCode: product.externalCode || '',
+    barcode: getProductBarcode(product),
     price: getProductPrice(product),
+    cost: getProductCost(product),
     href: product.meta.href,
     type: product.meta.type
   }));
+}
+
+function getProductBarcode(product) {
+  const barcode = Array.isArray(product.barcodes) ? product.barcodes[0] : null;
+  if (!barcode) {
+    return '';
+  }
+  return barcode.ean13 || barcode.ean8 || barcode.code128 || barcode.gtin || '';
 }
 
 function getProductPrice(product) {
@@ -745,6 +800,14 @@ function getProductPrice(product) {
     return 0;
   }
   return roundMoney(Number(salePrice.value) / 100);
+}
+
+function getProductCost(product) {
+  const buyPrice = product.buyPrice;
+  if (!buyPrice || !Number.isFinite(Number(buyPrice.value))) {
+    return 0;
+  }
+  return roundMoney(Number(buyPrice.value) / 100);
 }
 
 async function getMoySkladPaymentTypes() {

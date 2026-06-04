@@ -30,10 +30,11 @@
 
           <div id="itemsList" class="items-list wide"></div>
 
-           <label class="wide">
+          <label class="wide">
             <span>Поиск товара</span>
-            <input id="productSearch" name="productSearch" placeholder="Название или код товара">
+            <input id="productSearch" name="productSearch" placeholder="Введите название, код, артикул или штрихкод" autocomplete="off">
           </label>
+          <div id="productResults" class="search-results wide"></div>
           <button id="addItemButton" class="secondary-button" type="button">Добавить товар +</button>
 
          
@@ -97,8 +98,9 @@
 
           <label id="customerSearchField" class="wide hidden">
             <span>Поиск старого клиента</span>
-            <input id="customerSearch" name="customerSearch" placeholder="Имя или телефон клиента">
+            <input id="customerSearch" name="customerSearch" placeholder="Введите имя или телефон клиента" autocomplete="off">
           </label>
+          <div id="customerResults" class="search-results wide hidden"></div>
 
           <label id="existingCustomerField" class="wide hidden">
             <span>Старый клиент</span>

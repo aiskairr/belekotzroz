@@ -16,7 +16,9 @@ const customerDuplicateWarning = document.querySelector('#customerDuplicateWarni
 
 const fields = {
   productSearch: document.querySelector('#productSearch'),
+  productResults: document.querySelector('#productResults'),
   customerSearch: document.querySelector('#customerSearch'),
+  customerResults: document.querySelector('#customerResults'),
   customerSearchField: document.querySelector('#customerSearchField'),
   existingCustomerField: document.querySelector('#existingCustomerField'),
   cashPrepaymentField: document.querySelector('#cashPrepaymentField'),
@@ -140,18 +142,44 @@ addMissingCustomerButton.addEventListener('click', () => {
 });
 
 fields.productSearch.addEventListener('input', () => {
+  renderProductResults('Ищу товары...');
   window.clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
     loadProducts(fields.productSearch.value);
   }, 350);
 });
 
+fields.productSearch.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  event.preventDefault();
+  if (products[0]) {
+    addProductToOrder(products[0]);
+    fields.productSearch.value = '';
+    fields.productResults.innerHTML = '';
+  }
+});
+
 fields.customerSearch.addEventListener('input', () => {
+  renderCustomerResults('Ищу клиентов...');
   renderMissingCustomerAction();
   window.clearTimeout(customerSearchTimer);
   customerSearchTimer = window.setTimeout(() => {
     loadCustomers(fields.customerSearch.value);
   }, 350);
+});
+
+fields.customerSearch.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  event.preventDefault();
+  if (customers[0]) {
+    existingCustomerSelect.value = customers[0].href;
+    applySelectedCustomer();
+    renderCustomerResults();
+  }
 });
 
 fields.customerName.addEventListener('input', () => {
@@ -255,6 +283,7 @@ async function loadCustomers(search = '') {
 
   customers = data.customers;
   renderCustomers();
+  renderCustomerResults();
 }
 
 async function loadProducts(search = '') {
@@ -271,7 +300,73 @@ async function loadProducts(search = '') {
 
   products = data.products;
   refreshItemProductOptions();
+  renderProductResults();
   updateCalculation();
+}
+
+function renderProductResults(message = '') {
+  if (!fields.productResults) {
+    return;
+  }
+
+  fields.productResults.innerHTML = '';
+  const query = fields.productSearch.value.trim();
+
+  if (message) {
+    fields.productResults.append(createSearchState(message));
+    return;
+  }
+
+  if (!query) {
+    fields.productResults.append(createSearchState('Начните вводить название или код товара.'));
+    return;
+  }
+
+  if (!products.length) {
+    fields.productResults.append(createSearchState('Товар не найден. Попробуйте код, артикул или другое слово.'));
+    return;
+  }
+
+  for (const product of products.slice(0, 12)) {
+    const button = document.createElement('button');
+    button.className = 'search-result';
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      addProductToOrder(product);
+      fields.productSearch.value = '';
+      fields.productResults.innerHTML = '';
+    });
+
+    const title = document.createElement('strong');
+    title.textContent = product.name;
+
+    const metaLine = document.createElement('span');
+    const parts = [];
+    if (product.code) {
+      parts.push(`Код: ${product.code}`);
+    }
+    if (product.article) {
+      parts.push(`Артикул: ${product.article}`);
+    }
+    if (product.externalCode) {
+      parts.push(`Внешний код: ${product.externalCode}`);
+    }
+    if (product.barcode) {
+      parts.push(`Штрихкод: ${product.barcode}`);
+    }
+    parts.push(formatSom(product.price || 0));
+    metaLine.textContent = parts.join(' · ');
+
+    button.append(title, metaLine);
+    fields.productResults.append(button);
+  }
+}
+
+function createSearchState(text) {
+  const state = document.createElement('div');
+  state.className = 'search-state';
+  state.textContent = text;
+  return state;
 }
 
 function createProductOptions(selectedHref = '') {
@@ -316,11 +411,21 @@ function createProductOptions(selectedHref = '') {
 
 function addItemRow() {
   const product = products[0];
+  if (!product) {
+    setStatus('Сначала найдите товар через поиск.', 'error');
+    fields.productSearch.focus();
+    return;
+  }
+  addProductToOrder(product);
+}
+
+function addProductToOrder(product) {
   orderItems.push({
     productName: product?.name || '',
     assortmentHref: product?.href || '',
     assortmentType: product?.type || 'product',
     productPrice: product?.price || 0,
+    productCost: product?.cost || 0,
     quantity: 1
   });
   renderOrderItems();
@@ -333,22 +438,15 @@ function renderOrderItems() {
     const row = document.createElement('div');
     row.className = 'item-row';
 
-    const productLabel = document.createElement('label');
-    productLabel.className = 'item-product';
+    const productInfo = document.createElement('div');
+    productInfo.className = 'item-product-info';
     const productTitle = document.createElement('span');
-    productTitle.textContent = 'Товар';
-    const productSelect = document.createElement('select');
-    productSelect.append(createProductOptions(item.assortmentHref));
-    productSelect.addEventListener('change', () => {
-      const product = products.find((entry) => entry.href === productSelect.value);
-      item.productName = product?.name || '';
-      item.assortmentHref = product?.href || '';
-      item.assortmentType = product?.type || 'product';
-      item.productPrice = product?.price || 0;
-      renderOrderItems();
-      updateCalculation();
-    });
-    productLabel.append(productTitle, productSelect);
+    productTitle.textContent = `Товар ${index + 1}`;
+    const productName = document.createElement('strong');
+    productName.textContent = item.productName || 'Товар не выбран';
+    const productMeta = document.createElement('small');
+    productMeta.textContent = item.productCost ? `Себестоимость: ${formatSom(item.productCost)}` : 'Себестоимость не указана';
+    productInfo.append(productTitle, productName, productMeta);
 
     const priceLabel = document.createElement('label');
     const priceTitle = document.createElement('span');
@@ -386,7 +484,7 @@ function renderOrderItems() {
       updateCalculation();
     });
 
-    row.append(productLabel, priceLabel, quantityLabel, remove);
+    row.append(productInfo, priceLabel, quantityLabel, remove);
     itemsList.append(row);
   }
 }
@@ -543,14 +641,68 @@ function renderCustomers() {
   applySelectedCustomer();
 }
 
+function renderCustomerResults(message = '') {
+  if (!fields.customerResults) {
+    return;
+  }
+
+  const existing = getCustomerMode() === 'existing';
+  fields.customerResults.classList.toggle('hidden', !existing);
+  fields.customerResults.innerHTML = '';
+
+  if (!existing) {
+    return;
+  }
+
+  const query = fields.customerSearch.value.trim();
+  if (message) {
+    fields.customerResults.append(createSearchState(message));
+    return;
+  }
+
+  if (!query) {
+    fields.customerResults.append(createSearchState('Введите имя или телефон, чтобы найти старого клиента.'));
+    return;
+  }
+
+  if (!customers.length) {
+    fields.customerResults.append(createSearchState('Клиент не найден. Можно добавить как нового.'));
+    return;
+  }
+
+  for (const customer of customers.slice(0, 12)) {
+    const button = document.createElement('button');
+    button.className = 'search-result';
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      existingCustomerSelect.value = customer.href;
+      applySelectedCustomer();
+      fields.customerSearch.value = customer.phone ? `${customer.name} ${customer.phone}` : customer.name;
+      fields.customerResults.innerHTML = '';
+      renderMissingCustomerAction();
+    });
+
+    const title = document.createElement('strong');
+    title.textContent = customer.name;
+
+    const metaLine = document.createElement('span');
+    metaLine.textContent = [customer.phone, customer.actualAddress].filter(Boolean).join(' · ') || 'Без телефона';
+
+    button.append(title, metaLine);
+    fields.customerResults.append(button);
+  }
+}
+
 function renderCustomerMode() {
   const existing = getCustomerMode() === 'existing';
   fields.customerSearchField.classList.toggle('hidden', !existing);
-  fields.existingCustomerField.classList.toggle('hidden', !existing);
+  fields.customerResults.classList.toggle('hidden', !existing);
+  fields.existingCustomerField.classList.add('hidden');
   fields.customerName.readOnly = existing;
   fields.customerName.required = !existing;
   renderMissingCustomerAction();
   renderDuplicateCustomerWarning();
+  renderCustomerResults();
   if (existing) {
     applySelectedCustomer();
   }
