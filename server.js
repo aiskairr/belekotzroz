@@ -755,9 +755,54 @@ async function getMoySkladCustomers(search) {
 
 async function getMoySkladProducts(search) {
   const token = requiredEnv('MOYSKLAD_TOKEN');
+  const queries = getProductSearchQueries(search);
+  const allProducts = [];
+  const seen = new Set();
+
+  for (const query of queries) {
+    const rows = await loadMoySkladProductRows(token, query);
+    for (const product of rows) {
+      const href = product.meta?.href;
+      if (!href || seen.has(href)) {
+        continue;
+      }
+      seen.add(href);
+      allProducts.push(product);
+    }
+  }
+
+  return allProducts.slice(0, 30).map((product) => ({
+    id: product.id,
+    name: product.name,
+    code: product.code,
+    article: product.article || '',
+    externalCode: product.externalCode || '',
+    barcode: getProductBarcode(product),
+    price: getProductPrice(product),
+    cost: getProductCost(product),
+    href: product.meta.href,
+    type: product.meta.type
+  }));
+}
+
+function getProductSearchQueries(search) {
+  const query = String(search || '').trim();
+  if (!query) {
+    return [''];
+  }
+
+  const queries = [query];
+  if (/^\d+$/.test(query)) {
+    queries.push(`B${query}`, `b${query}`);
+  }
+
+  return [...new Set(queries)];
+}
+
+async function loadMoySkladProductRows(token, search) {
   const params = new URLSearchParams({ limit: '30' });
-  if (search.trim()) {
-    params.set('search', search.trim());
+  if (search) {
+    params.set('search', search);
   }
 
   const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/product?${params}`, {
@@ -772,18 +817,7 @@ async function getMoySkladProducts(search) {
     throw httpError(response.status, 'Не удалось загрузить товары из МойСклад.', data);
   }
 
-  return (data.rows || []).map((product) => ({
-    id: product.id,
-    name: product.name,
-    code: product.code,
-    article: product.article || '',
-    externalCode: product.externalCode || '',
-    barcode: getProductBarcode(product),
-    price: getProductPrice(product),
-    cost: getProductCost(product),
-    href: product.meta.href,
-    type: product.meta.type
-  }));
+  return data.rows || [];
 }
 
 function getProductBarcode(product) {

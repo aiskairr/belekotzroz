@@ -52,11 +52,13 @@ let stores = [];
 let customers = [];
 let orderItems = [];
 let searchTimer;
+let productSearchRequestId = 0;
 let customerSearchTimer;
 let duplicateCustomerTimer;
 let duplicateCustomer = null;
 let submitInProgress = false;
 let selectedBranch = '';
+let productsLoading = false;
 
 const branches = {
   ayu: 'Аю-Гранд',
@@ -287,21 +289,43 @@ async function loadCustomers(search = '') {
 }
 
 async function loadProducts(search = '') {
+  const requestId = ++productSearchRequestId;
+  setProductsLoading(true);
   const params = new URLSearchParams();
   if (search.trim()) {
     params.set('search', search.trim());
   }
 
-  const response = await fetch(`/api/products?${params}`);
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Не удалось загрузить товары.');
-  }
+  try {
+    const response = await fetch(`/api/products?${params}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Не удалось загрузить товары.');
+    }
 
-  products = data.products;
-  refreshItemProductOptions();
-  renderProductResults();
-  updateCalculation();
+    if (requestId !== productSearchRequestId) {
+      return;
+    }
+
+    products = data.products;
+    refreshItemProductOptions();
+    renderProductResults();
+    updateCalculation();
+  } finally {
+    if (requestId === productSearchRequestId) {
+      setProductsLoading(false);
+    }
+  }
+}
+
+function setProductsLoading(loading) {
+  productsLoading = loading;
+  fields.productSearch.disabled = loading && !fields.productSearch.value.trim();
+  addItemButton.disabled = loading;
+  addItemButton.textContent = loading ? 'Загружаю товары...' : 'Добавить товар +';
+  if (loading) {
+    renderProductResults('Загружаю товары...');
+  }
 }
 
 function renderProductResults(message = '') {
@@ -313,7 +337,7 @@ function renderProductResults(message = '') {
   const query = fields.productSearch.value.trim();
 
   if (message) {
-    fields.productResults.append(createSearchState(message));
+    fields.productResults.append(createSearchState(message, 'loading'));
     return;
   }
 
@@ -345,15 +369,6 @@ function renderProductResults(message = '') {
     if (product.code) {
       parts.push(`Код: ${product.code}`);
     }
-    if (product.article) {
-      parts.push(`Артикул: ${product.article}`);
-    }
-    if (product.externalCode) {
-      parts.push(`Внешний код: ${product.externalCode}`);
-    }
-    if (product.barcode) {
-      parts.push(`Штрихкод: ${product.barcode}`);
-    }
     parts.push(formatSom(product.price || 0));
     metaLine.textContent = parts.join(' · ');
 
@@ -362,9 +377,9 @@ function renderProductResults(message = '') {
   }
 }
 
-function createSearchState(text) {
+function createSearchState(text, type = '') {
   const state = document.createElement('div');
-  state.className = 'search-state';
+  state.className = `search-state ${type}`.trim();
   state.textContent = text;
   return state;
 }
@@ -410,6 +425,11 @@ function createProductOptions(selectedHref = '') {
 }
 
 function addItemRow() {
+  if (productsLoading) {
+    setStatus('Подождите, товары еще загружаются.', 'error');
+    return;
+  }
+
   const product = products[0];
   if (!product) {
     setStatus('Сначала найдите товар через поиск.', 'error');
@@ -444,9 +464,7 @@ function renderOrderItems() {
     productTitle.textContent = `Товар ${index + 1}`;
     const productName = document.createElement('strong');
     productName.textContent = item.productName || 'Товар не выбран';
-    const productMeta = document.createElement('small');
-    productMeta.textContent = item.productCost ? `Себестоимость: ${formatSom(item.productCost)}` : 'Себестоимость не указана';
-    productInfo.append(productTitle, productName, productMeta);
+    productInfo.append(productTitle, productName);
 
     const priceLabel = document.createElement('label');
     const priceTitle = document.createElement('span');
