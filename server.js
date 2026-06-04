@@ -159,6 +159,7 @@ server.listen(PORT, HOST, () => {
 function calculate(input) {
   const items = getOrderItems(input);
   const cashPrepayment = toMoney(input.cashPrepayment || 0);
+  const prepaymentMethodName = String(input.prepaymentMethodName || 'Наличными');
   const transferPrepayment = toMoney(input.transferPrepayment || 0);
   const paymentTypeName = String(input.paymentTypeName || input.bank || 'M+ (6 мес)');
   const paymentType = parsePaymentType(paymentTypeName);
@@ -198,6 +199,7 @@ function calculate(input) {
     rate,
     baseTotal,
     cashPrepayment,
+    prepaymentMethodName,
     transferPrepayment,
     prepaidTotal,
     installmentBase,
@@ -433,7 +435,7 @@ function buildDocumentDescription(calculation) {
     lines.push(`Не оплачено: ${formatMoney(unpaidAmount)} сом.`);
     lines.push(`Долг: ${formatMoney(unpaidAmount)} сом.`);
   } else if (isMixed) {
-    lines.push(`Наличными: ${formatMoney(paidAmount)} сом.`);
+    lines.push(`${calculation.prepaymentMethodName}: ${formatMoney(paidAmount)} сом.`);
     lines.push(`${paymentName}: ${formatMoney(unpaidAmount)} сом.`);
   }
 
@@ -581,12 +583,19 @@ function getRetailPaymentSums(calculation) {
     };
   }
 
-  const cashSum = roundMoney(Math.min(calculation.cashPrepayment, calculation.finalTotal));
+  const prepaidAmount = roundMoney(Math.min(calculation.cashPrepayment, calculation.finalTotal));
+  const prepaymentIsCash = isCashPrepaymentMethod(calculation.prepaymentMethodName);
+  const cashSum = prepaymentIsCash ? prepaidAmount : 0;
   const noCashSum = roundMoney(calculation.finalTotal - cashSum);
   return {
     cashSum: toMoySkladPrice(cashSum),
     noCashSum: toMoySkladPrice(noCashSum)
   };
+}
+
+function isCashPrepaymentMethod(methodName) {
+  const name = String(methodName || '').toLowerCase();
+  return name.includes('налич') || name.includes('cash');
 }
 
 async function getOrCreateCounterparty(token, input) {

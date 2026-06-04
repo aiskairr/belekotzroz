@@ -22,9 +22,11 @@ const fields = {
   customerSearchField: document.querySelector('#customerSearchField'),
   existingCustomerField: document.querySelector('#existingCustomerField'),
   cashPrepaymentField: document.querySelector('#cashPrepaymentField'),
+  prepaymentMethodField: document.querySelector('#prepaymentMethodField'),
   transferPrepaymentField: document.querySelector('#transferPrepaymentField'),
   paymentTypeField: document.querySelector('#paymentTypeField'),
   cashPrepayment: document.querySelector('#cashPrepayment'),
+  prepaymentMethod: document.querySelector('#prepaymentMethod'),
   transferPrepayment: document.querySelector('#transferPrepayment'),
   customerName: document.querySelector('#customerName'),
   customerPhone: document.querySelector('#customerPhone'),
@@ -117,6 +119,10 @@ employeeSelect.addEventListener('change', () => {
 });
 
 storeSelect.addEventListener('change', () => {
+  updateCalculation();
+});
+
+fields.prepaymentMethod.addEventListener('change', () => {
   updateCalculation();
 });
 
@@ -551,10 +557,12 @@ function applyPaymentScenario() {
   fields.transferPrepayment.value = '0';
   fields.transferPrepaymentField.classList.add('hidden');
   fields.cashPrepaymentField.classList.toggle('hidden', scenario !== 'mixed' && scenario !== 'debt');
+  fields.prepaymentMethodField.classList.toggle('hidden', scenario !== 'mixed' && scenario !== 'debt');
   fields.paymentTypeField.classList.toggle('hidden', scenario === 'cash' || scenario === 'debt');
 
   if (scenario === 'cash') {
     fields.cashPrepayment.value = '0';
+    fields.prepaymentMethod.value = 'Наличными';
     selectPaymentType(findCashPaymentType());
     return;
   }
@@ -852,6 +860,7 @@ function getPayload() {
   return {
     items: orderItems,
     cashPrepayment: fields.cashPrepayment.value,
+    prepaymentMethodName: fields.prepaymentMethod.value,
     transferPrepayment: fields.transferPrepayment.value,
     paymentTypeName: selectedPaymentType?.name || '',
     paymentTypeHref: selectedPaymentType?.href || '',

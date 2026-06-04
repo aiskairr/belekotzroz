@@ -60,8 +60,19 @@
           </fieldset>
 
           <label id="cashPrepaymentField">
-            <span>Наличными сразу</span>
+            <span>Оплата сразу</span>
             <input id="cashPrepayment" name="cashPrepayment" inputmode="decimal" value="0">
+          </label>
+
+          <label id="prepaymentMethodField" class="hidden">
+            <span>Способ оплаты сразу</span>
+            <select id="prepaymentMethod" name="prepaymentMethod">
+              <option value="Наличными">Наличными</option>
+              <option value="MBusiness QR">MBusiness QR</option>
+              <option value="OptimaBusiness QR">OptimaBusiness QR</option>
+              <option value="O! Business QR">O! Business QR</option>
+              <option value="Bakai Business QR">Bakai Business QR</option>
+            </select>
           </label>
 
           <label id="transferPrepaymentField">
