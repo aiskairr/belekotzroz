@@ -1,6 +1,7 @@
 const form = document.querySelector('#orderForm');
 const app = document.querySelector('.app');
 const branchScreen = document.querySelector('#branchScreen');
+const appPreloader = document.querySelector('#appPreloader');
 const branchLabel = document.querySelector('#branchLabel');
 const paymentTypeSelect = document.querySelector('#paymentType');
 const employeeSelect = document.querySelector('#employee');
@@ -61,6 +62,7 @@ let duplicateCustomer = null;
 let submitInProgress = false;
 let selectedBranch = '';
 let productsLoading = false;
+let productsReady = false;
 
 const branches = {
   ayu: 'Аю-Гранд',
@@ -71,18 +73,23 @@ init();
 
 async function init() {
   try {
+    setAppPreloader(true, 'Загружаю настройки...');
     const response = await fetch('/api/config');
     config = await response.json();
     await loadPaymentTypes();
     await loadEmployees();
     await loadStores();
     await loadCustomers();
-    await loadProducts();
+    setAppPreloader(true, 'Загружаю товары...');
+    await loadProducts('', { throwOnError: true });
+    productsReady = true;
     renderCustomerMode();
     initBranchSelection();
     await updateCalculation();
   } catch (error) {
     setStatus('Не удалось загрузить настройки расчета.', 'error');
+  } finally {
+    setAppPreloader(false);
   }
 }
 
@@ -90,6 +97,18 @@ for (const button of document.querySelectorAll('[data-branch]')) {
   button.addEventListener('click', () => {
     selectBranch(button.dataset.branch);
   });
+}
+
+function setAppPreloader(visible, message = 'Загружаю товары...') {
+  if (!appPreloader) {
+    return;
+  }
+
+  const text = appPreloader.querySelector('strong');
+  if (text) {
+    text.textContent = message;
+  }
+  appPreloader.classList.toggle('hidden', !visible);
 }
 
 form.addEventListener('input', () => {
@@ -294,7 +313,7 @@ async function loadCustomers(search = '') {
   renderCustomerResults();
 }
 
-async function loadProducts(search = '') {
+async function loadProducts(search = '', options = {}) {
   const requestId = ++productSearchRequestId;
   setProductsLoading(true);
   const params = new URLSearchParams();
@@ -313,10 +332,19 @@ async function loadProducts(search = '') {
       return;
     }
 
-    products = data.products;
+    products = Array.isArray(data.products) ? data.products : [];
     refreshItemProductOptions();
     renderProductResults();
     updateCalculation();
+  } catch (error) {
+    if (requestId === productSearchRequestId) {
+      products = [];
+      renderProductResults(error.message || 'Не удалось загрузить товары.');
+      setStatus(error.message || 'Не удалось загрузить товары.', 'error');
+    }
+    if (options.throwOnError) {
+      throw error;
+    }
   } finally {
     if (requestId === productSearchRequestId) {
       setProductsLoading(false);
@@ -431,6 +459,11 @@ function createProductOptions(selectedHref = '') {
 }
 
 function addItemRow() {
+  if (!productsReady) {
+    setStatus('Подождите, товары еще загружаются.', 'error');
+    return;
+  }
+
   if (productsLoading) {
     setStatus('Подождите, товары еще загружаются.', 'error');
     return;
