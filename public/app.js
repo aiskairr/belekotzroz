@@ -14,6 +14,12 @@ const itemsList = document.querySelector('#itemsList');
 const submitButton = document.querySelector('#submitButton');
 const statusEl = document.querySelector('#status');
 const customerDuplicateWarning = document.querySelector('#customerDuplicateWarning');
+const successModal = document.querySelector('#successModal');
+const successMessage = document.querySelector('#successMessage');
+const printDocumentButton = document.querySelector('#printDocumentButton');
+const openMoyskladButton = document.querySelector('#openMoyskladButton');
+const closeSuccessModalButton = document.querySelector('#closeSuccessModalButton');
+const printReceipt = document.querySelector('#printReceipt');
 
 const fields = {
   productSearch: document.querySelector('#productSearch'),
@@ -47,6 +53,18 @@ const summary = {
   monthlyPayment: document.querySelector('#monthlyPayment')
 };
 
+const compactSummary = {
+  baseTotal: document.querySelector('#compactBaseTotal'),
+  productLabel: document.querySelector('#compactProductLabel'),
+  paymentTypeLabel: document.querySelector('#compactPaymentTypeLabel'),
+  prepaidTotal: document.querySelector('#compactPrepaidTotal'),
+  installmentBaseLabel: document.querySelector('#compactInstallmentBaseLabel'),
+  installmentBase: document.querySelector('#compactInstallmentBase'),
+  finalTotal: document.querySelector('#compactFinalTotal'),
+  monthlyPaymentLabel: document.querySelector('#compactMonthlyPaymentLabel'),
+  monthlyPayment: document.querySelector('#compactMonthlyPayment')
+};
+
 let config = {};
 let products = [];
 let paymentTypes = [];
@@ -63,6 +81,7 @@ let submitInProgress = false;
 let selectedBranch = '';
 let productsLoading = false;
 let productsReady = false;
+let lastCreatedOrder = null;
 
 const branches = {
   ayu: 'Аю-Гранд',
@@ -224,6 +243,25 @@ for (const radio of document.querySelectorAll('input[name="customerMode"]')) {
   });
 }
 
+printDocumentButton.addEventListener('click', () => {
+  if (!lastCreatedOrder) {
+    return;
+  }
+  renderPrintReceipt(lastCreatedOrder);
+  window.print();
+});
+
+openMoyskladButton.addEventListener('click', () => {
+  const url = getMoySkladWebUrl(lastCreatedOrder?.document);
+  if (url) {
+    window.open(url, '_blank', 'noopener');
+  }
+});
+
+closeSuccessModalButton.addEventListener('click', () => {
+  successModal.classList.add('hidden');
+});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (submitInProgress) {
@@ -254,6 +292,8 @@ form.addEventListener('submit', async (event) => {
     const documentName = data.document?.name ? ` №${data.document.name}` : '';
     const documentTitle = getDocumentTitle(data.document?.type);
     const paymentText = data.document?.payment?.name ? ` Входящий платеж №${data.document.payment.name} создан.` : '';
+    lastCreatedOrder = { ...data, requestPayload: payload };
+    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}`);
     setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}`, 'success');
   } catch (error) {
     setStatus(error.message, 'error');
@@ -564,7 +604,25 @@ function renderPaymentTypes() {
   if (defaultType) {
     paymentTypeSelect.value = defaultType.href;
   }
+  renderPrepaymentMethods();
   applyPaymentScenario();
+}
+
+function renderPrepaymentMethods() {
+  const currentValue = fields.prepaymentMethod.value || 'Наличными';
+  const methods = getPrepaymentMethods();
+  fields.prepaymentMethod.innerHTML = '';
+
+  for (const method of methods) {
+    const option = document.createElement('option');
+    option.value = method.name;
+    option.textContent = method.name;
+    fields.prepaymentMethod.append(option);
+  }
+
+  if (methods.some((method) => method.name === currentValue)) {
+    fields.prepaymentMethod.value = currentValue;
+  }
 }
 
 function applyPaymentScenario() {
@@ -610,8 +668,9 @@ function applyPaymentScenario() {
   }
 
   const selected = getSelectedPaymentType();
-  if (!selected || !isBankPaymentType(selected)) {
-    selectPaymentType(paymentTypes.find(isBankPaymentType));
+  const visiblePaymentTypes = getVisiblePaymentTypes();
+  if (!selected || !visiblePaymentTypes.some((paymentType) => paymentType.href === selected.href)) {
+    selectPaymentType(visiblePaymentTypes[0]);
   }
 }
 
@@ -753,17 +812,27 @@ function renderCustomerResults(message = '') {
 }
 
 function renderCustomerMode() {
-  const existing = getCustomerMode() === 'existing';
+  const mode = getCustomerMode();
+  const existing = mode === 'existing';
+  const retail = mode === 'retail';
   fields.customerSearchField.classList.toggle('hidden', !existing);
   fields.customerResults.classList.toggle('hidden', !existing);
   fields.existingCustomerField.classList.add('hidden');
   fields.customerName.readOnly = existing;
-  fields.customerName.required = !existing;
+  fields.customerName.required = mode === 'new';
+  fields.customerPhone.required = mode === 'new';
+  fields.customerName.closest('label').classList.toggle('hidden', retail);
+  fields.customerPhone.closest('label').classList.toggle('hidden', retail);
+  fields.customerAddress.closest('label').classList.toggle('hidden', retail);
   renderMissingCustomerAction();
   renderDuplicateCustomerWarning();
   renderCustomerResults();
   if (existing) {
     applySelectedCustomer();
+  } else if (retail) {
+    fields.customerName.value = '';
+    fields.customerPhone.value = '';
+    fields.customerAddress.value = '';
   }
 }
 
@@ -862,29 +931,56 @@ async function updateCalculation() {
 }
 
 function renderEmptyCalculation() {
-  summary.baseTotal.textContent = formatSom(0);
-  summary.productLabel.textContent = 'Добавьте товар';
-  summary.paymentTypeLabel.textContent = getSelectedPaymentType()?.name || '';
-  summary.prepaidTotal.textContent = formatSom(0);
-  summary.installmentBaseLabel.textContent = 'Остаток';
-  summary.installmentBase.textContent = formatSom(0);
-  summary.commission.textContent = formatSom(0);
-  summary.finalTotal.textContent = formatSom(0);
-  summary.monthlyPaymentLabel.textContent = 'Платеж в месяц';
-  summary.monthlyPayment.textContent = formatSom(0);
+  const emptyData = {
+    baseTotal: 0,
+    productLabel: 'Добавьте товар',
+    paymentType: getSelectedPaymentType()?.name || '',
+    prepaidTotal: 0,
+    installmentBaseLabel: 'Остаток',
+    installmentBase: 0,
+    commission: 0,
+    finalTotal: 0,
+    monthlyPaymentLabel: 'Платеж в месяц',
+    monthlyPayment: 0
+  };
+  renderSummary(summary, emptyData);
+  renderSummary(compactSummary, emptyData);
 }
 
 function renderCalculation(data) {
-  summary.baseTotal.textContent = formatSom(data.baseTotal);
-  summary.productLabel.textContent = data.items?.length > 1 ? `${data.items.length} товара` : data.items?.[0]?.productName || 'Выберите товар';
-  summary.paymentTypeLabel.textContent = data.paymentType;
-  summary.prepaidTotal.textContent = formatSom(data.prepaidTotal);
-  summary.installmentBaseLabel.textContent = getRemainderLabel(data);
-  summary.installmentBase.textContent = formatSom(data.installmentBase);
-  summary.commission.textContent = formatSom(data.commission);
-  summary.finalTotal.textContent = formatSom(data.finalTotal);
-  summary.monthlyPaymentLabel.textContent = isDebtPayment(data) ? 'К оплате потом' : 'Платеж в месяц';
-  summary.monthlyPayment.textContent = formatSom(data.monthlyPayment);
+  const summaryData = {
+    baseTotal: data.baseTotal,
+    productLabel: data.items?.length > 1 ? `${data.items.length} товара` : data.items?.[0]?.productName || 'Выберите товар',
+    paymentType: data.paymentType,
+    prepaidTotal: data.prepaidTotal,
+    installmentBaseLabel: getRemainderLabel(data),
+    installmentBase: data.installmentBase,
+    commission: data.commission,
+    finalTotal: data.finalTotal,
+    monthlyPaymentLabel: isDebtPayment(data) ? 'К оплате потом' : 'Платеж в месяц',
+    monthlyPayment: data.monthlyPayment
+  };
+  renderSummary(summary, summaryData);
+  renderSummary(compactSummary, summaryData);
+}
+
+function renderSummary(target, data) {
+  if (!target?.baseTotal) {
+    return;
+  }
+
+  target.baseTotal.textContent = formatSom(data.baseTotal);
+  target.productLabel.textContent = data.productLabel;
+  target.paymentTypeLabel.textContent = data.paymentType;
+  target.prepaidTotal.textContent = formatSom(data.prepaidTotal);
+  target.installmentBaseLabel.textContent = data.installmentBaseLabel;
+  target.installmentBase.textContent = formatSom(data.installmentBase);
+  if (target.commission) {
+    target.commission.textContent = formatSom(data.commission);
+  }
+  target.finalTotal.textContent = formatSom(data.finalTotal);
+  target.monthlyPaymentLabel.textContent = data.monthlyPaymentLabel;
+  target.monthlyPayment.textContent = formatSom(data.monthlyPayment);
 }
 
 function getPayload() {
@@ -928,7 +1024,10 @@ function getSelectedPaymentType() {
 
 function getVisiblePaymentTypes() {
   const scenario = getPaymentScenario();
-  if (scenario === 'bank' || scenario === 'mixed') {
+  if (scenario === 'bank') {
+    return paymentTypes.filter(isBankScenarioPaymentType);
+  }
+  if (scenario === 'mixed') {
     return paymentTypes.filter(isBankPaymentType);
   }
   if (scenario === 'cash') {
@@ -954,13 +1053,37 @@ function findDebtPaymentType() {
   return paymentTypes.find(isDebtPaymentType) || paymentTypes[0];
 }
 
+function getPrepaymentMethods() {
+  const methods = [{ name: 'Наличными' }];
+  for (const paymentType of paymentTypes.filter(isQrPaymentType)) {
+    if (!methods.some((method) => method.name === paymentType.name)) {
+      methods.push({ name: paymentType.name });
+    }
+  }
+  return methods;
+}
+
 function isCashPaymentType(paymentType) {
   const name = String(paymentType?.name || '').toLowerCase();
   return name.includes('налич') || name.includes('cash') || name.includes('qr') || name.includes('карта');
 }
 
+function isQrPaymentType(paymentType) {
+  const name = String(paymentType?.name || '').toLowerCase();
+  return name.includes('qr');
+}
+
 function isDebtPaymentType(paymentType) {
   return String(paymentType?.name || '').toLowerCase().includes('долг');
+}
+
+function isBankScenarioPaymentType(paymentType) {
+  return !isDebtPaymentType(paymentType) && !isCashOnlyPaymentType(paymentType);
+}
+
+function isCashOnlyPaymentType(paymentType) {
+  const name = String(paymentType?.name || '').toLowerCase();
+  return name.includes('налич') || name.includes('cash') || name.includes('карта');
 }
 
 function isBankPaymentType(paymentType) {
@@ -998,6 +1121,179 @@ function getDocumentTitle(type) {
     return 'Отгрузка';
   }
   return 'Документ';
+}
+
+function showSuccessModal(data, message) {
+  successMessage.textContent = message;
+  openMoyskladButton.disabled = !getMoySkladWebUrl(data.document);
+  successModal.classList.remove('hidden');
+  renderPrintReceipt(data);
+}
+
+function getMoySkladWebUrl(document) {
+  if (!document?.id || !document?.type) {
+    return '';
+  }
+
+  return `https://online.moysklad.ru/app/#${document.type}/edit?id=${encodeURIComponent(document.id)}`;
+}
+
+function renderPrintReceipt(data) {
+  const calculation = data?.calculation || {};
+  const document = data?.document || {};
+  const payload = data?.requestPayload || {};
+  const rows = Array.isArray(calculation.items) ? calculation.items : [];
+  const total = Number(calculation.finalTotal || calculation.baseTotal || 0);
+  const buyer = getPrintBuyer(payload);
+  const storeName = payload.retailStoreName || payload.storeName || '';
+
+  printReceipt.innerHTML = `
+    <div class="waybill">
+      <h1>Расходная накладная № ${escapeHtml(document.name || '')} от ${formatReceiptDate(document.moment || new Date())}</h1>
+      <p><strong>Поставщик:</strong> ИП Матаев Женишбек Камилович</p>
+      <p><strong>Покупатель:</strong> ${escapeHtml(buyer)}</p>
+      <p class="waybill-store"><strong>Склад:</strong> ${escapeHtml(storeName)}</p>
+
+      <table class="waybill-table">
+        <thead>
+          <tr>
+            <th>№ п.п.</th>
+            <th>Наименование</th>
+            <th>Ед. изм.</th>
+            <th>Цена</th>
+            <th>Кол-во</th>
+            <th>Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((item, index) => `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${escapeHtml(item.productName || '')}</td>
+              <td>шт</td>
+              <td class="num">${formatReceiptMoney(item.productPrice || 0)}</td>
+              <td class="num">${escapeHtml(String(item.quantity || 1))}</td>
+              <td class="num">${formatReceiptMoney(item.lineTotal || 0)}</td>
+            </tr>
+          `).join('')}
+          <tr class="waybill-total-row">
+            <td colspan="5">Итого</td>
+            <td class="num">${formatReceiptMoney(total)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="waybill-count">Всего наименований ${rows.length}, на сумму ${formatReceiptMoney(total)} сом</p>
+      <p class="waybill-words">${escapeHtml(numberToRussianSom(total))}</p>
+
+      <div class="signature-note">прописью</div>
+      <div class="signatures">
+        <div><span>Отпустил</span><b></b></div>
+        <div><span>Получил</span><b></b></div>
+      </div>
+    </div>
+  `;
+}
+
+function getPrintBuyer(payload) {
+  if (payload.customerMode === 'retail') {
+    return 'Розничный покупатель';
+  }
+
+  const parts = [payload.customerName, payload.customerPhone].filter(Boolean);
+  return parts.join(', ') || 'Розничный покупатель';
+}
+
+function formatReceiptDate(value) {
+  return new Intl.DateTimeFormat('ru-RU').format(new Date(value));
+}
+
+function formatReceiptMoney(value) {
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value || 0));
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function numberToRussianSom(value) {
+  const amount = Math.round(Number(value || 0) * 100);
+  const soms = Math.floor(amount / 100);
+  const tyiyn = amount % 100;
+  const words = integerToRussianWords(soms);
+  const result = `${words} ${plural(soms, ['сом', 'сома', 'сомов'])} ${String(tyiyn).padStart(2, '0')} ${plural(tyiyn, ['тыйын', 'тыйына', 'тыйынов'])}`;
+  return result.charAt(0).toUpperCase() + result.slice(1);
+}
+
+function integerToRussianWords(number) {
+  if (!number) {
+    return 'ноль';
+  }
+
+  const units = [
+    ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'],
+    ['', 'одна', 'две', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять']
+  ];
+  const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+  const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+  const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+  const scales = [
+    ['', '', '', 0],
+    ['тысяча', 'тысячи', 'тысяч', 1],
+    ['миллион', 'миллиона', 'миллионов', 0]
+  ];
+
+  const parts = [];
+  let rest = Math.floor(number);
+  let scaleIndex = 0;
+
+  while (rest > 0) {
+    const chunk = rest % 1000;
+    if (chunk) {
+      const gender = scales[scaleIndex]?.[3] || 0;
+      const chunkWords = [];
+      chunkWords.push(hundreds[Math.floor(chunk / 100)]);
+      const lastTwo = chunk % 100;
+      if (lastTwo >= 10 && lastTwo < 20) {
+        chunkWords.push(teens[lastTwo - 10]);
+      } else {
+        chunkWords.push(tens[Math.floor(lastTwo / 10)]);
+        chunkWords.push(units[gender][lastTwo % 10]);
+      }
+      const scale = scales[scaleIndex];
+      if (scaleIndex > 0) {
+        chunkWords.push(plural(chunk, [scale[0], scale[1], scale[2]]));
+      }
+      parts.unshift(chunkWords.filter(Boolean).join(' '));
+    }
+    rest = Math.floor(rest / 1000);
+    scaleIndex += 1;
+  }
+
+  return parts.join(' ');
+}
+
+function plural(number, forms) {
+  const abs = Math.abs(number) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) {
+    return forms[2];
+  }
+  if (last > 1 && last < 5) {
+    return forms[1];
+  }
+  if (last === 1) {
+    return forms[0];
+  }
+  return forms[2];
 }
 
 function getRemainderLabel(data) {

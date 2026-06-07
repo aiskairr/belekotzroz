@@ -140,8 +140,9 @@ label {
 }
 
 .client-mode {
-  display: flex;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   align-items: center;
   border: 1px solid #d8dee8;
   border-radius: 6px;
@@ -158,8 +159,20 @@ label {
 
 .client-mode label {
   display: flex;
+  min-height: 42px;
   gap: 8px;
   align-items: center;
+  justify-content: center;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #172033;
+}
+
+.client-mode label:has(input:checked) {
+  border-color: #1c6cae;
+  background: #eef4fb;
+  color: #173f6d;
 }
 
 .client-mode input {
@@ -259,6 +272,44 @@ button:disabled {
 .items-list {
   display: grid;
   gap: 8px;
+}
+
+.compact-summary {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.compact-summary div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.compact-summary span {
+  color: #647084;
+  font-size: 13px;
+}
+
+.compact-summary strong {
+  color: #172033;
+  font-size: 15px;
+  text-align: right;
+}
+
+.compact-summary-total {
+  border-top: 1px solid #d8dee8;
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.compact-summary-total strong {
+  color: #173f6d;
+  font-size: 22px;
 }
 
 .search-results {
@@ -385,6 +436,10 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .client-mode {
+    grid-template-columns: 1fr;
+  }
+
   .item-row {
     grid-template-columns: 1fr;
   }
@@ -455,10 +510,186 @@ hr {
   color: #067647;
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 32, 51, 0.46);
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: min(420px, 100%);
+  border-radius: 8px;
+  background: #fff;
+  padding: 26px;
+  box-shadow: 0 24px 70px rgba(23, 32, 51, 0.24);
+  text-align: center;
+}
+
+.success-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  margin: 0 auto 14px;
+  border-radius: 999px;
+  background: #dcfae6;
+  color: #067647;
+  font-size: 34px;
+  font-weight: 800;
+}
+
+.modal-card h2 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.modal-card p {
+  margin: 0 0 20px;
+  color: #536071;
+  line-height: 1.45;
+}
+
+.modal-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.modal-actions button {
+  grid-column: auto;
+}
+
+.print-receipt {
+  display: none;
+}
+
+.waybill {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  color: #111;
+  font-family: Arial, sans-serif;
+  font-size: 14px;
+}
+
+.waybill h1 {
+  margin: 0 0 14px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.waybill p {
+  margin: 0 0 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.waybill-store {
+  margin: 24px 0 18px 120px !important;
+}
+
+.waybill-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.waybill-table th,
+.waybill-table td {
+  border: 1px solid #555;
+  padding: 7px 6px;
+  vertical-align: middle;
+}
+
+.waybill-table th {
+  text-align: center;
+  font-weight: 700;
+}
+
+.waybill-table th:first-child,
+.waybill-table td:first-child {
+  width: 58px;
+  text-align: center;
+}
+
+.waybill-table th:nth-child(3),
+.waybill-table td:nth-child(3) {
+  width: 90px;
+  text-align: center;
+}
+
+.waybill-table th:nth-child(4),
+.waybill-table th:nth-child(5),
+.waybill-table th:nth-child(6) {
+  width: 120px;
+}
+
+.waybill-table .num {
+  text-align: right;
+}
+
+.waybill-total-row td {
+  font-weight: 700;
+}
+
+.waybill-total-row td:first-child {
+  text-align: right;
+}
+
+.waybill-count {
+  margin-top: 20px !important;
+  font-weight: 400 !important;
+}
+
+.waybill-words {
+  font-weight: 700 !important;
+}
+
+.signature-note {
+  margin: 28px 0 10px;
+  border-top: 1px solid #333;
+  padding-top: 3px;
+  text-align: center;
+  font-size: 10px;
+}
+
+.signatures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+  margin-top: 24px;
+}
+
+.signatures div {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.signatures b {
+  display: block;
+  flex: 1;
+  border-bottom: 1px solid #333;
+  height: 22px;
+}
+
 @media (max-width: 820px) {
   .app {
     grid-template-columns: 1fr;
     margin: 20px auto;
+  }
+
+  .summary {
+    display: none;
   }
 }
 
@@ -474,5 +705,19 @@ hr {
 
   h1 {
     font-size: 24px;
+  }
+}
+
+@media print {
+  body > *:not(.print-receipt) {
+    display: none !important;
+  }
+
+  .print-receipt {
+    display: block;
+  }
+
+  @page {
+    margin: 12mm;
   }
 }

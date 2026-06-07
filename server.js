@@ -219,7 +219,7 @@ async function createMoySkladDocument(calculation, input) {
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const documentType = resolveDocumentType(calculation);
   const organizationHref = requiredEnv('MOYSKLAD_ORGANIZATION_HREF');
-  if (!String(input.customerPhone || '').trim()) {
+  if (input.customerMode !== 'retail' && !String(input.customerPhone || '').trim()) {
     throw httpError(400, 'Укажите номер телефона клиента.');
   }
   const agentHref = await getOrCreateCounterparty(token, input);
@@ -599,6 +599,10 @@ function isCashPrepaymentMethod(methodName) {
 }
 
 async function getOrCreateCounterparty(token, input) {
+  if (input.customerMode === 'retail') {
+    return requiredEnv('MOYSKLAD_AGENT_HREF');
+  }
+
   if (input.customerMode === 'existing' && input.customerHref) {
     await updateCounterpartyContact(token, input.customerHref, input);
     return input.customerHref;
@@ -838,7 +842,13 @@ function getProductBarcode(product) {
 }
 
 function getProductPrice(product) {
-  const salePrice = Array.isArray(product.salePrices) ? product.salePrices[0] : null;
+  const salePrices = Array.isArray(product.salePrices) ? product.salePrices : [];
+  const preferredName = process.env.MOYSKLAD_PRODUCT_PRICE_NAME || 'Цена 6м';
+  const salePrice = salePrices.find((price) => {
+    const typeName = String(price.priceType?.name || '').trim().toLowerCase();
+    return typeName === preferredName.trim().toLowerCase();
+  }) || salePrices.find((price) => Number(price.value) > 0) || salePrices[0];
+
   if (!salePrice || !Number.isFinite(Number(salePrice.value))) {
     return 0;
   }

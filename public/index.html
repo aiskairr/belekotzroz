@@ -44,7 +44,36 @@
           <div id="productResults" class="search-results wide"></div>
           <button id="addItemButton" class="secondary-button" type="button">Добавить товар +</button>
 
-         
+          <section class="compact-summary wide" aria-live="polite">
+            <div>
+              <span>Товар</span>
+              <strong id="compactProductLabel">Добавьте товар</strong>
+            </div>
+            <div>
+              <span>Сумма товара</span>
+              <strong id="compactBaseTotal">0,00 сом</strong>
+            </div>
+            <div>
+              <span>Тип оплаты</span>
+              <strong id="compactPaymentTypeLabel"></strong>
+            </div>
+            <div>
+              <span>Оплачено сразу</span>
+              <strong id="compactPrepaidTotal">0,00 сом</strong>
+            </div>
+            <div>
+              <span id="compactInstallmentBaseLabel">Остаток</span>
+              <strong id="compactInstallmentBase">0,00 сом</strong>
+            </div>
+            <div class="compact-summary-total">
+              <span>Итог</span>
+              <strong id="compactFinalTotal">0,00 сом</strong>
+            </div>
+            <div>
+              <span id="compactMonthlyPaymentLabel">Платеж в месяц</span>
+              <strong id="compactMonthlyPayment">0,00 сом</strong>
+            </div>
+          </section>
 
           <fieldset class="wide payment-scenario">
             <legend>Оплата</legend>
@@ -73,13 +102,7 @@
 
           <label id="prepaymentMethodField" class="hidden">
             <span>Способ оплаты сразу</span>
-            <select id="prepaymentMethod" name="prepaymentMethod">
-              <option value="Наличными">Наличными</option>
-              <option value="MBusiness QR">MBusiness QR</option>
-              <option value="OptimaBusiness QR">OptimaBusiness QR</option>
-              <option value="O! Business QR">O! Business QR</option>
-              <option value="Bakai Business QR">Bakai Business QR</option>
-            </select>
+            <select id="prepaymentMethod" name="prepaymentMethod"></select>
           </label>
 
           <label id="transferPrepaymentField">
@@ -105,7 +128,11 @@
           <fieldset class="wide client-mode">
             <legend>Клиент</legend>
             <label>
-              <input type="radio" name="customerMode" value="new" checked>
+              <input type="radio" name="customerMode" value="retail" checked>
+              <span>Розничный покупатель</span>
+            </label>
+            <label>
+              <input type="radio" name="customerMode" value="new">
               <span>Новый клиент</span>
             </label>
             <label>
@@ -182,6 +209,21 @@
         <p id="status" class="status"></p>
       </section>
     </main>
+
+    <section id="successModal" class="modal hidden" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <div class="success-icon">✓</div>
+        <h2>Документ создан</h2>
+        <p id="successMessage">Продажа создана в МойСклад.</p>
+        <div class="modal-actions">
+          <button id="printDocumentButton" type="button">Распечатать</button>
+          <button id="openMoyskladButton" class="secondary-button" type="button">Открыть в МойСклад</button>
+          <button id="closeSuccessModalButton" class="secondary-button" type="button">Закрыть</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
     <script src="/app.js" type="module"></script>
   </body>
