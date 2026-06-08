@@ -443,6 +443,10 @@ td.num {
   -webkit-print-color-adjust: exact;
 }
 
+.print-sheet thead {
+  display: table-row-group;
+}
+
 .print-sheet th,
 .print-sheet td {
   border: 1px solid #2f2f2f;
