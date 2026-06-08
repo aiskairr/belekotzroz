@@ -88,7 +88,7 @@ function bindEvents() {
 
   document.querySelector('#printButton').addEventListener('click', () => {
     renderPrintReport();
-    window.print();
+    printWithTitle(`Отчет продаж ${els.dateFrom.value} - ${els.dateTo.value}`);
   });
 }
 
@@ -154,7 +154,7 @@ function renderReport(report) {
         return;
       }
       renderPrintWaybill(row);
-      window.print();
+      printWithTitle(`Товарная накладная ${row.name || ''} ${toInputDate(new Date(row.moment || Date.now()))}`.trim());
     });
   });
 }
@@ -550,4 +550,20 @@ function escapeHtml(value) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
+}
+
+function printWithTitle(title) {
+  const oldTitle = document.title;
+  document.title = sanitizeFileName(title);
+  window.print();
+  window.setTimeout(() => {
+    document.title = oldTitle;
+  }, 1000);
+}
+
+function sanitizeFileName(value) {
+  return String(value || 'Отчет')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
