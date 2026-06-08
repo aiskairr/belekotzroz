@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Отчетность продаж</title>
+    <link rel="stylesheet" href="/report.css">
+  </head>
+  <body>
+    <main class="report-app">
+      <section id="loginPanel" class="login-panel">
+        <form id="loginForm" class="login-card">
+          <p class="eyebrow">Закрытый доступ</p>
+          <h1>Отчетность</h1>
+          <label>
+            <span>Логин</span>
+            <input id="login" name="login" autocomplete="username" required>
+          </label>
+          <label>
+            <span>Пароль</span>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Войти</button>
+          <p id="loginStatus" class="status"></p>
+        </form>
+      </section>
+
+      <section id="reportPanel" class="report-panel hidden">
+        <header class="report-header">
+          <div>
+            <p class="eyebrow">Продажи и отгрузки</p>
+            <h1>Отчетность</h1>
+          </div>
+          <div class="header-actions">
+            <a href="/">Создать продажу</a>
+            <button id="logoutButton" class="secondary" type="button">Выйти</button>
+          </div>
+        </header>
+
+        <form id="filtersForm" class="filters">
+          <div class="period-picker">
+            <div class="period-tabs" aria-label="Быстрый выбор периода">
+              <span>Период:</span>
+              <button type="button" data-period="yesterday">вч</button>
+              <button type="button" data-period="today">сег</button>
+              <button type="button" data-period="week">нед</button>
+              <button type="button" data-period="month">мес</button>
+            </div>
+            <div class="period-display">
+              <button id="periodPrev" class="period-arrow" type="button" aria-label="Предыдущий период">‹</button>
+              <strong id="periodLabel">Сегодня</strong>
+              <button id="periodNext" class="period-arrow" type="button" aria-label="Следующий период">›</button>
+            </div>
+          </div>
+          <label>
+            <span>С даты</span>
+            <input id="dateFrom" name="dateFrom" type="date" required>
+          </label>
+          <label>
+            <span>По дату</span>
+            <input id="dateTo" name="dateTo" type="date" required>
+          </label>
+          <label>
+            <span>Точка продаж</span>
+            <select id="retailStore" name="retailStore"></select>
+          </label>
+          <button type="submit">Показать</button>
+          <button id="printButton" class="secondary" type="button">Печать</button>
+        </form>
+
+        <section class="total-grid">
+          <div>
+            <span>Документов</span>
+            <strong id="totalDocuments">0</strong>
+          </div>
+          <div>
+            <span>Сумма</span>
+            <strong id="totalAmount">0,00 сом</strong>
+          </div>
+          <div>
+            <span>Оплачено</span>
+            <strong id="totalPaid">0,00 сом</strong>
+          </div>
+          <div>
+            <span>Не оплачено</span>
+            <strong id="totalUnpaid">0,00 сом</strong>
+          </div>
+          <div>
+            <span>Чистая прибыль</span>
+            <strong id="totalNetProfit">0,00 сом</strong>
+          </div>
+        </section>
+
+        <section class="table-card">
+          <div class="table-title">
+            <h2>Документы</h2>
+            <p id="reportStatus" class="status"></p>
+          </div>
+          <div id="reportRows" class="document-list">
+            <div class="empty-state">Выберите период и нажмите "Показать".</div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <section id="printReport" class="print-report" aria-hidden="true"></section>
+
+    <script src="/report.js" type="module"></script>
+  </body>
+</html>

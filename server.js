@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,6 +53,7 @@ const contentTypes = {
 };
 
 const recentOrders = new Map();
+const reportCookieName = 'mysrs_report_session';
 
 const server = createServer(async (req, res) => {
   try {
@@ -109,6 +111,35 @@ const server = createServer(async (req, res) => {
       const search = url.searchParams.get('search') || '';
       const customers = await getMoySkladCustomers(search);
       sendJson(res, 200, { customers });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/report/session') {
+      sendJson(res, 200, { authenticated: isReportAuthenticated(req) });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/report/login') {
+      const body = await readJson(req);
+      loginReportUser(req, res, body);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/report/logout') {
+      clearReportSession(res);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/reports/sales') {
+      requireReportAuth(req);
+      const report = await getSalesReport({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || '',
+        retailStoreHref: url.searchParams.get('retailStoreHref') || '',
+        storeHref: url.searchParams.get('storeHref') || ''
+      });
+      sendJson(res, 200, report);
       return;
     }
 
@@ -894,6 +925,229 @@ async function getMoySkladPaymentTypes() {
     .sort((left, right) => left.provider.localeCompare(right.provider, 'ru') || left.months - right.months);
 }
 
+async function getSalesReport(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const dateFrom = normalizeReportDate(input.dateFrom, 'from');
+  const dateTo = normalizeReportDate(input.dateTo, 'to');
+  const retailStoreHref = String(input.retailStoreHref || '').trim();
+  const storeHref = String(input.storeHref || '').trim();
+
+  const [retailRows, demandRows] = await Promise.all([
+    loadMoySkladReportDocuments(token, 'retaildemand', dateFrom, dateTo, { retailStoreHref }),
+    loadMoySkladReportDocuments(token, 'demand', dateFrom, dateTo, { storeHref })
+  ]);
+
+  const rows = [...retailRows, ...demandRows]
+    .map((document) => mapReportDocument(document))
+    .sort((left, right) => new Date(right.moment) - new Date(left.moment));
+
+  const totals = rows.reduce((sum, row) => ({
+    documents: sum.documents + 1,
+    amount: roundMoney(sum.amount + row.amount),
+    paid: roundMoney(sum.paid + row.paid),
+    unpaid: roundMoney(sum.unpaid + row.unpaid),
+    commission: roundMoney(sum.commission + row.commission),
+    netProfit: roundMoney(sum.netProfit + row.netProfit)
+  }), {
+    documents: 0,
+    amount: 0,
+    paid: 0,
+    unpaid: 0,
+    commission: 0,
+    netProfit: 0
+  });
+
+  return {
+    dateFrom: input.dateFrom,
+    dateTo: input.dateTo,
+    rows,
+    totals
+  };
+}
+
+async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo, options = {}) {
+  const rows = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (offset < 1000) {
+    const filters = [
+      `moment>=${dateFrom}`,
+      `moment<=${dateTo}`
+    ];
+    if (documentType === 'retaildemand' && options.retailStoreHref) {
+      filters.push(`retailStore=${options.retailStoreHref}`);
+    }
+    if (documentType === 'demand' && options.storeHref) {
+      filters.push(`store=${options.storeHref}`);
+    }
+
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      order: 'moment,desc',
+      filter: filters.join(';'),
+      expand: 'agent,organization,store,retailStore,positions,positions.assortment'
+    });
+
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}?${params}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, `Не удалось загрузить отчет ${getDocumentTypeLabel(documentType)} из МойСклад.`, data);
+    }
+
+    rows.push(...(data.rows || []).map((row) => ({ ...row, reportDocumentType: documentType })));
+    if (!data.rows || data.rows.length < limit) {
+      break;
+    }
+    offset += limit;
+  }
+
+  return rows;
+}
+
+function mapReportDocument(document) {
+  const documentType = document.reportDocumentType || document.meta?.type || '';
+  const positions = Array.isArray(document.positions?.rows) ? document.positions.rows : [];
+  const amount = fromMoySkladPrice(document.sum);
+  const paidAttribute = getReportNumberAttribute(document, 'PAID', documentType);
+  const unpaidAttribute = getReportNumberAttribute(document, 'UNPAID', documentType);
+  const paid = paidAttribute !== null
+    ? paidAttribute
+    : documentType === 'retaildemand'
+      ? roundMoney(fromMoySkladPrice(document.cashSum) + fromMoySkladPrice(document.noCashSum))
+      : fromMoySkladPrice(document.payedSum);
+  const unpaid = unpaidAttribute !== null ? unpaidAttribute : roundMoney(Math.max(0, amount - paid));
+
+  return {
+    id: document.id,
+    name: document.name || '',
+    type: documentType,
+    typeLabel: getDocumentTypeLabel(documentType),
+    moment: document.moment || document.created || '',
+    storeName: document.retailStore?.name || document.store?.name || '',
+    organizationName: document.organization?.name || '',
+    customerName: document.agent?.name || '',
+    paymentType: getReportPaymentType(document, documentType),
+    employeeName: getReportTextAttribute(document, 'EMPLOYEE', documentType),
+    products: positions.map((position) => ({
+      code: position.assortment?.code || '',
+      name: position.assortment?.name || position.name || 'Товар',
+      quantity: Number(position.quantity || 0),
+      price: fromMoySkladPrice(position.price),
+      sum: fromMoySkladPrice(position.price) * Number(position.quantity || 0)
+    })),
+    productText: buildReportProductText(positions.map((position) => {
+      const name = position.assortment?.name || position.name || 'Товар';
+      const quantity = Number(position.quantity || 0);
+      return `${name} x ${quantity}`;
+    })),
+    amount,
+    paid,
+    unpaid,
+    commission: getReportMoneyFromTextAttribute(document, 'COMMISSION', documentType),
+    netProfit: getReportNumberAttribute(document, 'NET_PROFIT', documentType) ?? 0,
+    comment: document.description || ''
+  };
+}
+
+function buildReportProductText(productLines) {
+  if (!productLines.length) {
+    return '';
+  }
+  if (productLines.length <= 3) {
+    return productLines.join(', ');
+  }
+  return `${productLines.slice(0, 3).join(', ')} и еще ${productLines.length - 3}`;
+}
+
+function getReportPaymentType(document, documentType) {
+  const fromAttribute = getReportTextAttribute(document, 'PAYMENT_TYPE', documentType);
+  if (fromAttribute) {
+    return fromAttribute;
+  }
+
+  const match = String(document.description || '').match(/Тип оплаты:\s*([^\n.]+)/i);
+  return match ? match[1].trim() : '';
+}
+
+function getReportTextAttribute(document, attribute, documentType) {
+  const value = getReportAttributeValue(document, attribute, documentType);
+  if (!value) {
+    return '';
+  }
+  if (typeof value === 'object') {
+    return value.name || value.meta?.href || '';
+  }
+  return String(value);
+}
+
+function getReportNumberAttribute(document, attribute, documentType) {
+  const value = getReportAttributeValue(document, attribute, documentType);
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getReportMoneyFromTextAttribute(document, attribute, documentType) {
+  const value = getReportAttributeValue(document, attribute, documentType);
+  if (value === undefined || value === null || value === '') {
+    return 0;
+  }
+  if (typeof value === 'number') {
+    return value;
+  }
+  const match = String(value).replace(/\s/g, '').replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function getReportAttributeValue(document, attribute, documentType) {
+  const attributeHref = getAttributeHref(attribute, documentType);
+  if (!attributeHref || !Array.isArray(document.attributes)) {
+    return undefined;
+  }
+  const attributeId = getIdFromHref(attributeHref);
+  const found = document.attributes.find((entry) => {
+    const href = entry.meta?.href || '';
+    return href === attributeHref || getIdFromHref(href) === attributeId;
+  });
+  return found?.value;
+}
+
+function normalizeReportDate(value, side) {
+  const date = String(value || '').trim() || new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw httpError(400, 'Дата отчета должна быть в формате YYYY-MM-DD.');
+  }
+  return `${date} ${side === 'to' ? '23:59:59' : '00:00:00'}`;
+}
+
+function getDocumentTypeLabel(type) {
+  if (type === 'retaildemand') {
+    return 'Продажа';
+  }
+  if (type === 'demand') {
+    return 'Отгрузка';
+  }
+  if (type === 'customerorder') {
+    return 'Заказ';
+  }
+  return 'Документ';
+}
+
+function fromMoySkladPrice(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? roundMoney(number / 100) : 0;
+}
+
 async function getMoySkladEmployees() {
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const customEntityId = requiredEnv('MOYSKLAD_EMPLOYEE_CUSTOM_ENTITY_ID');
@@ -1175,6 +1429,95 @@ function requiredEnv(name) {
     throw httpError(500, `Заполните ${name} в .env.`);
   }
   return value;
+}
+
+function requiredReportEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw httpError(500, `Заполните ${name} в .env для доступа к отчетам.`);
+  }
+  return value;
+}
+
+function loginReportUser(req, res, body) {
+  const login = String(body.login || '').trim();
+  const password = String(body.password || '');
+  const expectedLogin = requiredReportEnv('REPORT_LOGIN');
+  const expectedPassword = requiredReportEnv('REPORT_PASSWORD');
+
+  if (!safeEqual(login, expectedLogin) || !safeEqual(password, expectedPassword)) {
+    throw httpError(401, 'Неверный логин или пароль.');
+  }
+
+  setReportSession(res, login);
+  sendJson(res, 200, { ok: true });
+}
+
+function requireReportAuth(req) {
+  if (!isReportAuthenticated(req)) {
+    throw httpError(401, 'Войдите в отчетность.');
+  }
+}
+
+function isReportAuthenticated(req) {
+  const token = parseCookies(req.headers.cookie || '')[reportCookieName];
+  if (!token) {
+    return false;
+  }
+
+  const [payloadPart, signature] = token.split('.');
+  if (!payloadPart || !signature) {
+    return false;
+  }
+
+  const expectedSignature = signReportPayload(payloadPart);
+  if (!safeEqual(signature, expectedSignature)) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+    return payload.exp > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function setReportSession(res, login) {
+  const payload = Buffer.from(JSON.stringify({
+    login,
+    exp: Date.now() + 12 * 60 * 60 * 1000
+  })).toString('base64url');
+  const token = `${payload}.${signReportPayload(payload)}`;
+  res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
+}
+
+function clearReportSession(res) {
+  res.setHeader('Set-Cookie', `${reportCookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+}
+
+function signReportPayload(payload) {
+  const secret = process.env.REPORT_SESSION_SECRET || process.env.MOYSKLAD_TOKEN || 'local-report-secret';
+  return createHmac('sha256', secret).update(payload).digest('base64url');
+}
+
+function parseCookies(cookieHeader) {
+  return Object.fromEntries(String(cookieHeader || '').split(';').map((cookie) => {
+    const index = cookie.indexOf('=');
+    if (index === -1) {
+      return ['', ''];
+    }
+    return [cookie.slice(0, index).trim(), cookie.slice(index + 1).trim()];
+  }).filter(([key]) => key));
+}
+
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''));
+  const rightBuffer = Buffer.from(String(right || ''));
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function sendJson(res, status, payload) {

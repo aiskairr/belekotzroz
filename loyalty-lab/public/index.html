@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Лояльность | Тест</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Тестовая папка</p>
+          <h1>Система лояльности</h1>
+        </div>
+        <div class="status" id="connectionStatus">Проверка...</div>
+      </header>
+
+      <section class="grid">
+        <form class="panel" id="customerForm">
+          <h2>Клиент</h2>
+          <label>
+            <span>Телефон</span>
+            <input id="phone" name="phone" autocomplete="tel" placeholder="+996..." required>
+          </label>
+          <label>
+            <span>ФИО</span>
+            <input id="name" name="name" autocomplete="name" placeholder="Имя клиента">
+          </label>
+          <div class="actions">
+            <button type="button" id="findCustomer">Найти</button>
+            <button type="submit">Создать</button>
+          </div>
+        </form>
+
+        <section class="balance-card">
+          <span>Баланс бонусов</span>
+          <strong id="balance">0</strong>
+          <p id="customerInfo">Клиент не выбран</p>
+        </section>
+      </section>
+
+      <section class="grid">
+        <form class="panel" id="accrueForm">
+          <h2>Начислить</h2>
+          <label>
+            <span>Сумма продажи</span>
+            <input id="saleAmount" name="saleAmount" inputmode="numeric" placeholder="10000">
+          </label>
+          <label>
+            <span>Процент бонуса</span>
+            <input id="percent" name="percent" inputmode="decimal" value="3">
+          </label>
+          <label>
+            <span>Номер продажи</span>
+            <input id="saleIdAccrue" name="saleId" placeholder="Например 00117">
+          </label>
+          <div class="preview">Будет начислено: <strong id="bonusPreview">0</strong></div>
+          <button type="submit">Начислить бонусы</button>
+        </form>
+
+        <form class="panel" id="redeemForm">
+          <h2>Списать</h2>
+          <label>
+            <span>Сумма бонусов</span>
+            <input id="redeemAmount" name="amount" inputmode="numeric" placeholder="500">
+          </label>
+          <label>
+            <span>Номер продажи</span>
+            <input id="saleIdRedeem" name="saleId" placeholder="Например 00118">
+          </label>
+          <label>
+            <span>Комментарий</span>
+            <input id="commentRedeem" name="comment" placeholder="Оплата бонусами">
+          </label>
+          <button type="submit">Списать бонусы</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-title">
+          <h2>История</h2>
+          <button type="button" id="refreshHistory">Обновить</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Операция</th>
+                <th>Сумма</th>
+                <th>Баланс</th>
+                <th>Продажа</th>
+                <th>Комментарий</th>
+              </tr>
+            </thead>
+            <tbody id="history">
+              <tr><td colspan="6">Выберите клиента</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="toast" id="toast" hidden></div>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1146,51 +1146,46 @@ function renderPrintReceipt(data) {
   const total = Number(calculation.finalTotal || calculation.baseTotal || 0);
   const buyer = getPrintBuyer(payload);
   const storeName = payload.retailStoreName || payload.storeName || '';
+  const employeeName = payload.employeeName || '';
+  const paymentType = calculation.paymentType || payload.paymentTypeName || '';
+  const paid = Number(calculation.prepaidTotal || calculation.finalTotal || 0);
+  const unpaid = Math.max(0, total - paid);
 
   printReceipt.innerHTML = `
-    <div class="waybill">
-      <h1>Расходная накладная № ${escapeHtml(document.name || '')} от ${formatReceiptDate(document.moment || new Date())}</h1>
-      <p><strong>Поставщик:</strong> ИП Матаев Женишбек Камилович</p>
-      <p><strong>Покупатель:</strong> ${escapeHtml(buyer)}</p>
-      <p class="waybill-store"><strong>Склад:</strong> ${escapeHtml(storeName)}</p>
+    <div class="thermal-receipt">
+      <h1>ТОВАРНЫЙ ЧЕК</h1>
+      <div class="receipt-center">ИП Матаев Женишбек Камилович</div>
+      <div class="receipt-line"></div>
 
-      <table class="waybill-table">
-        <thead>
-          <tr>
-            <th>№ п.п.</th>
-            <th>Наименование</th>
-            <th>Ед. изм.</th>
-            <th>Цена</th>
-            <th>Кол-во</th>
-            <th>Сумма</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map((item, index) => `
-            <tr>
-              <td>${index + 1}</td>
-              <td>${escapeHtml(item.productName || '')}</td>
-              <td>шт</td>
-              <td class="num">${formatReceiptMoney(item.productPrice || 0)}</td>
-              <td class="num">${escapeHtml(String(item.quantity || 1))}</td>
-              <td class="num">${formatReceiptMoney(item.lineTotal || 0)}</td>
-            </tr>
-          `).join('')}
-          <tr class="waybill-total-row">
-            <td colspan="5">Итого</td>
-            <td class="num">${formatReceiptMoney(total)}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="receipt-row"><span>Документ:</span><b>№ ${escapeHtml(document.name || '')}</b></div>
+      <div class="receipt-row"><span>Дата:</span><b>${formatReceiptDate(document.moment || new Date())}</b></div>
+      <div class="receipt-row"><span>Склад:</span><b>${escapeHtml(storeName || '-')}</b></div>
+      <div class="receipt-row"><span>Кассир:</span><b>${escapeHtml(employeeName || '-')}</b></div>
+      <div class="receipt-row"><span>Покупатель:</span><b>${escapeHtml(buyer || '-')}</b></div>
 
-      <p class="waybill-count">Всего наименований ${rows.length}, на сумму ${formatReceiptMoney(total)} сом</p>
-      <p class="waybill-words">${escapeHtml(numberToRussianSom(total))}</p>
-
-      <div class="signature-note">прописью</div>
-      <div class="signatures">
-        <div><span>Отпустил</span><b></b></div>
-        <div><span>Получил</span><b></b></div>
+      <div class="receipt-line"></div>
+      <div class="receipt-items">
+        ${rows.map((item, index) => `
+          <div class="receipt-item">
+            <div class="receipt-item-name">${index + 1}. ${escapeHtml(item.productName || '')}</div>
+            <div class="receipt-item-calc">
+              <span>${formatReceiptMoney(item.productPrice || 0)} x ${escapeHtml(String(item.quantity || 1))}</span>
+              <b>${formatReceiptMoney(item.lineTotal || 0)}</b>
+            </div>
+          </div>
+        `).join('')}
       </div>
+
+      <div class="receipt-line"></div>
+      <div class="receipt-total"><span>ИТОГО</span><b>${formatReceiptMoney(total)} сом</b></div>
+      <div class="receipt-row"><span>Тип оплаты:</span><b>${escapeHtml(paymentType || '-')}</b></div>
+      <div class="receipt-row"><span>Оплачено:</span><b>${formatReceiptMoney(paid)} сом</b></div>
+      ${unpaid > 0 ? `<div class="receipt-row"><span>Не оплачено:</span><b>${formatReceiptMoney(unpaid)} сом</b></div>` : ''}
+
+      <div class="receipt-line"></div>
+      <div class="receipt-count">Позиций: ${rows.length}</div>
+      <div class="receipt-thanks">Спасибо за покупку!</div>
+      <div class="receipt-cut"></div>
     </div>
   `;
 }
@@ -1205,7 +1200,13 @@ function getPrintBuyer(payload) {
 }
 
 function formatReceiptDate(value) {
-  return new Intl.DateTimeFormat('ru-RU').format(new Date(value));
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value));
 }
 
 function formatReceiptMoney(value) {
