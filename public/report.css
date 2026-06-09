@@ -277,15 +277,15 @@ h1 {
   display: grid;
   grid-template-columns: 110px 160px 140px 150px minmax(180px, 1fr) 150px 140px 160px;
   gap: 0;
-  background: #c9c9c9;
-  border-bottom: 1px solid #9b9b9b;
+  background: #34349a;
+  border-bottom: 1px solid #252583;
 }
 
 .document-card-head > div {
   display: grid;
   gap: 5px;
   min-width: 0;
-  border-right: 1px solid #a9a9a9;
+  border-right: 1px solid #5959bd;
   padding: 10px;
 }
 
@@ -303,10 +303,14 @@ h1 {
 .document-card-head strong {
   min-width: 0;
   overflow: hidden;
-  color: #111;
+  color: #fff;
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.document-card-head span {
+  color: #d8dcff;
 }
 
 .document-meta {
@@ -332,7 +336,7 @@ table,
 }
 
 .products-table {
-  min-width: 760px;
+  min-width: 860px;
 }
 
 .print-sheet table {
@@ -348,8 +352,8 @@ td {
 }
 
 th {
-  background: #34349a;
-  color: #fff;
+  background: #c9c9c9;
+  color: #111;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -367,8 +371,8 @@ td.num {
 
 .report-document-row td {
   border: 1px solid #8f8f8f;
-  background: #c9c9c9;
-  color: #111;
+  background: #34349a;
+  color: #fff;
   font-weight: 500;
 }
 
@@ -383,8 +387,8 @@ td.num {
 }
 
 .products-table th {
-  background: #34349a;
-  color: #fff;
+  background: #c9c9c9;
+  color: #111;
 }
 
 .products-table td {
@@ -396,20 +400,49 @@ td.num {
   font-weight: 650;
 }
 
+.return-cell {
+  width: 92px;
+  text-align: center;
+}
+
+.return-cell button {
+  min-height: 30px;
+  border: 1px solid #b42318;
+  border-radius: 6px;
+  background: #fff;
+  color: #b42318;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.return-cell button:disabled {
+  border-color: #9ca3af;
+  color: #6b7280;
+}
+
 .document-actions {
   display: flex;
+  gap: 10px;
   justify-content: flex-end;
   border-top: 1px solid #e2e8f0;
   background: #f8fafc;
   padding: 10px;
 }
 
-.document-actions button {
+.document-actions button,
+.document-actions a {
+  display: inline-flex;
+  align-items: center;
   min-height: 36px;
   border: 1px solid #1c6cae;
+  border-radius: 6px;
   background: #fff;
   color: #173f6d;
+  padding: 8px 12px;
   font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .print-report {
@@ -460,21 +493,21 @@ td.num {
 }
 
 .print-sheet th {
-  background: #233a9f !important;
-  color: #fff;
+  background: #c9c9c9 !important;
+  color: #111;
   font-weight: 800;
   text-align: center;
 }
 
 .print-sheet .print-head-main th,
 .print-sheet .print-head-sub th {
-  background: #233a9f !important;
-  color: #fff !important;
+  background: #c9c9c9 !important;
+  color: #111 !important;
 }
 
 .print-sheet .report-document-row td {
-  background: #d2d2d2 !important;
-  color: #111 !important;
+  background: #233a9f !important;
+  color: #fff !important;
   font-weight: 800;
   vertical-align: middle;
 }
@@ -575,6 +608,88 @@ td.num {
   text-align: center;
 }
 
+.receipt-sheet {
+  width: 72mm;
+  margin: 0 auto;
+  color: #111;
+  font-family: Arial, sans-serif;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.receipt-sheet h1 {
+  margin: 0 0 4mm;
+  text-align: center;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.receipt-center {
+  margin-bottom: 2mm;
+  text-align: center;
+  font-weight: 700;
+}
+
+.receipt-line {
+  border-top: 1px dashed #111;
+  margin: 3mm 0;
+}
+
+.receipt-row,
+.receipt-item-calc,
+.receipt-total {
+  display: flex;
+  justify-content: space-between;
+  gap: 3mm;
+  margin-bottom: 1.5mm;
+}
+
+.receipt-row span,
+.receipt-item-calc span {
+  color: #333;
+}
+
+.receipt-row b,
+.receipt-item-calc b,
+.receipt-total b {
+  text-align: right;
+}
+
+.receipt-item {
+  display: grid;
+  gap: 1mm;
+  margin-bottom: 2mm;
+}
+
+.receipt-item-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.receipt-total {
+  align-items: baseline;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.receipt-comment {
+  margin-top: 2mm;
+  border-top: 1px dotted #999;
+  padding-top: 2mm;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.receipt-count,
+.receipt-thanks {
+  text-align: center;
+  font-weight: 700;
+}
+
+.receipt-cut {
+  height: 8mm;
+}
+
 @media (max-width: 960px) {
   .report-header,
   .header-actions {
@@ -616,6 +731,22 @@ td.num {
 
   @page {
     margin: 8mm;
-    size: landscape;
+    size: A4 portrait;
+  }
+}
+
+@media print {
+  .receipt-print-report {
+    width: 80mm;
+    page: receipt;
+  }
+
+  .receipt-print-report .receipt-sheet {
+    width: 72mm;
+  }
+
+  @page receipt {
+    size: 80mm 200mm;
+    margin: 4mm;
   }
 }

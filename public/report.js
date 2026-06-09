@@ -147,6 +147,16 @@ function renderReport(report) {
   }
 
   reportRows.innerHTML = rows.map(renderDocumentGroup).join('');
+  reportRows.querySelectorAll('[data-print-receipt]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const row = rows.find((item) => item.id === button.dataset.printReceipt);
+      if (!row) {
+        return;
+      }
+      renderPrintReceipt(row);
+      printWithTitle(`Товарный чек ${row.name || ''} ${toInputDate(new Date(row.moment || Date.now()))}`.trim());
+    });
+  });
   reportRows.querySelectorAll('[data-print-waybill]').forEach((button) => {
     button.addEventListener('click', () => {
       const row = rows.find((item) => item.id === button.dataset.printWaybill);
@@ -155,6 +165,19 @@ function renderReport(report) {
       }
       renderPrintWaybill(row);
       printWithTitle(`Товарная накладная ${row.name || ''} ${toInputDate(new Date(row.moment || Date.now()))}`.trim());
+    });
+  });
+  reportRows.querySelectorAll('[data-return-product]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const row = rows.find((item) => item.id === button.dataset.documentId);
+      if (!row) {
+        return;
+      }
+      const product = row.products?.[Number(button.dataset.productIndex)];
+      if (!product) {
+        return;
+      }
+      await createReturn(row, product, button);
     });
   });
 }
@@ -203,6 +226,8 @@ function renderDocumentGroup(row) {
 
       <div class="document-meta">
         <div><span>Организация:</span> ${escapeHtml(row.organizationName || '-')}</div>
+        <div><span>Телефон:</span> ${escapeHtml(row.customerPhone || '-')}</div>
+        <div><span>Адрес:</span> ${escapeHtml(row.customerAddress || '-')}</div>
         <div><span>Комментарий:</span> ${escapeHtml(row.comment || '-')}</div>
         <div><span>Оплачено:</span> ${formatSom(row.paid)}</div>
         <div><span>Не оплачено:</span> ${formatSom(row.unpaid)}</div>
@@ -217,6 +242,7 @@ function renderDocumentGroup(row) {
               <th>Цена</th>
               <th>Кол-во</th>
               <th>Сумма</th>
+              <th>Возврат</th>
             </tr>
           </thead>
           <tbody>
@@ -227,16 +253,53 @@ function renderDocumentGroup(row) {
                 <td class="num">${formatSom(product.price)}</td>
                 <td class="num">${formatQuantity(product.quantity)}</td>
                 <td class="num">${formatSom(product.sum)}</td>
+                <td class="return-cell">
+                  <button type="button" data-return-product data-document-id="${escapeHtml(row.id)}" data-product-index="${escapeHtml(String(product.index ?? 0))}">Возврат</button>
+                </td>
               </tr>
             `).join('')}
           </tbody>
         </table>
       </div>
       <footer class="document-actions">
+        ${row.webUrl ? `<a href="${escapeHtml(row.webUrl)}" target="_blank" rel="noopener">Перейти к документу</a>` : ''}
+        <button type="button" data-print-receipt="${escapeHtml(row.id)}">Распечатать товарный чек</button>
         <button type="button" data-print-waybill="${escapeHtml(row.id)}">Распечатать товарную накладную</button>
       </footer>
     </article>
   `;
+}
+
+async function createReturn(row, product, button) {
+  const confirmed = window.confirm(`Создать возврат товара "${product.name}" по документу №${row.name}?`);
+  if (!confirmed) {
+    return;
+  }
+
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Создаю...';
+
+  try {
+    const data = await api('/api/reports/returns', {
+      method: 'POST',
+      body: {
+        documentId: row.id,
+        documentType: row.type,
+        productIndex: product.index,
+        quantity: product.quantity
+      }
+    });
+
+    button.textContent = 'Создано';
+    if (data.document?.webUrl) {
+      window.open(data.document.webUrl, '_blank', 'noopener');
+    }
+  } catch (error) {
+    alert(error.message);
+    button.disabled = false;
+    button.textContent = oldText;
+  }
 }
 
 function renderTotals(totals) {
@@ -252,6 +315,7 @@ function renderPrintReport() {
   const rows = Array.isArray(report.rows) ? report.rows : [];
   const totals = report.totals || {};
 
+  printReport.className = 'print-report';
   printReport.innerHTML = `
     <div class="print-sheet">
       <h1>Отчет продаж</h1>
@@ -300,15 +364,21 @@ function renderPrintReport() {
 }
 
 function renderPrintWaybill(row) {
+  printReport.className = 'print-report';
   const products = Array.isArray(row.products) && row.products.length
     ? row.products
     : [{ code: '', name: row.productText || 'Товар', quantity: 1, price: row.amount, sum: row.amount }];
+  const buyerName = row.customerName || 'Розничный покупатель';
+  const buyerPhone = row.customerPhone || '________________';
+  const buyerAddress = row.customerAddress || '____________________________';
 
   printReport.innerHTML = `
     <div class="waybill-sheet">
       <h1>Расходная накладная № ${escapeHtml(row.name)} от ${formatDateOnlyTime(row.moment)}</h1>
       <p><strong>Поставщик:</strong> ${escapeHtml(row.organizationName || 'ИП Матаев Женишбек Камилович')}</p>
-      <p><strong>Покупатель:</strong> ${escapeHtml(row.customerName || 'Розничный покупатель')}</p>
+      <p><strong>Имя покупателя:</strong> ${escapeHtml(buyerName)}</p>
+      <p><strong>Номер телефона:</strong> ${escapeHtml(buyerPhone)}</p>
+      <p><strong>Адрес покупателя:</strong> ${escapeHtml(buyerAddress)}</p>
       <p><strong>Склад:</strong> ${escapeHtml(row.storeName || '-')}</p>
       <p><strong>Сотрудник:</strong> ${escapeHtml(row.employeeName || '-')}</p>
 
@@ -357,7 +427,57 @@ function renderPrintWaybill(row) {
   `;
 }
 
+function renderPrintReceipt(row) {
+  const products = Array.isArray(row.products) && row.products.length
+    ? row.products
+    : [{ code: '', name: row.productText || 'Товар', quantity: 1, price: row.amount, sum: row.amount }];
+  const total = Number(row.amount || 0);
+  const paid = Number(row.paid || 0);
+  const unpaid = Number(row.unpaid || 0);
+
+  printReport.className = 'print-report receipt-print-report';
+  printReport.innerHTML = `
+    <div class="receipt-sheet">
+      <h1>ТОВАРНЫЙ ЧЕК</h1>
+      <div class="receipt-center">${escapeHtml(row.organizationName || 'ИП Матаев Женишбек Камилович')}</div>
+      <div class="receipt-line"></div>
+
+      <div class="receipt-row"><span>Документ:</span><b>№ ${escapeHtml(row.name || '')}</b></div>
+      <div class="receipt-row"><span>Дата:</span><b>${formatDateTime(row.moment)}</b></div>
+      <div class="receipt-row"><span>Склад:</span><b>${escapeHtml(row.storeName || '-')}</b></div>
+      <div class="receipt-row"><span>Кассир:</span><b>${escapeHtml(row.employeeName || '-')}</b></div>
+      <div class="receipt-row"><span>Покупатель:</span><b>${escapeHtml(row.customerName || 'Розничный покупатель')}</b></div>
+
+      <div class="receipt-line"></div>
+      <div class="receipt-items">
+        ${products.map((product, index) => `
+          <div class="receipt-item">
+            <div class="receipt-item-name">${index + 1}. ${escapeHtml(product.name || '')}</div>
+            <div class="receipt-item-calc">
+              <span>${formatReceiptMoney(product.price || 0)} x ${escapeHtml(formatQuantity(product.quantity || 1))}</span>
+              <b>${formatReceiptMoney(product.sum || 0)}</b>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="receipt-line"></div>
+      <div class="receipt-total"><span>ИТОГО</span><b>${formatReceiptMoney(total)} сом</b></div>
+      <div class="receipt-row"><span>Тип оплаты:</span><b>${escapeHtml(row.paymentType || '-')}</b></div>
+      <div class="receipt-row"><span>Оплачено:</span><b>${formatReceiptMoney(paid)} сом</b></div>
+      ${unpaid > 0 ? `<div class="receipt-row"><span>Не оплачено:</span><b>${formatReceiptMoney(unpaid)} сом</b></div>` : ''}
+      ${row.comment ? `<div class="receipt-comment">${escapeHtml(row.comment)}</div>` : ''}
+
+      <div class="receipt-line"></div>
+      <div class="receipt-count">Позиций: ${products.length}</div>
+      <div class="receipt-thanks">Спасибо за покупку!</div>
+      <div class="receipt-cut"></div>
+    </div>
+  `;
+}
+
 function renderPrintDocumentGroup(row) {
+  printReport.className = 'print-report';
   const products = Array.isArray(row.products) && row.products.length
     ? row.products
     : [{ code: '', name: row.productText || 'Товар', quantity: 1, price: row.amount, sum: row.amount }];
@@ -464,9 +584,23 @@ async function api(url, options = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || 'Ошибка запроса');
+    throw new Error(formatApiError(data));
   }
   return data;
+}
+
+function formatApiError(data) {
+  const base = data.error || 'Ошибка запроса';
+  const errors = data.details?.errors;
+  if (Array.isArray(errors) && errors.length) {
+    const messages = errors
+      .map((error) => error.error || error.message)
+      .filter(Boolean);
+    if (messages.length) {
+      return `${base}\n${messages.join('\n')}`;
+    }
+  }
+  return base;
 }
 
 function toInputDate(date) {
@@ -541,6 +675,13 @@ function formatSom(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(Number(value || 0))} сом`;
+}
+
+function formatReceiptMoney(value) {
+  return new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value || 0));
 }
 
 function escapeHtml(value) {

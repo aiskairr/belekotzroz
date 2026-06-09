@@ -14,6 +14,11 @@ const itemsList = document.querySelector('#itemsList');
 const submitButton = document.querySelector('#submitButton');
 const statusEl = document.querySelector('#status');
 const customerDuplicateWarning = document.querySelector('#customerDuplicateWarning');
+const loyaltyPanel = document.querySelector('#loyaltyPanel');
+const loyaltyBalance = document.querySelector('#loyaltyBalance');
+const loyaltyStatus = document.querySelector('#loyaltyStatus');
+const loyaltyAccrualPreview = document.querySelector('#loyaltyAccrualPreview');
+const loyaltyLimitPreview = document.querySelector('#loyaltyLimitPreview');
 const successModal = document.querySelector('#successModal');
 const successMessage = document.querySelector('#successMessage');
 const printDocumentButton = document.querySelector('#printDocumentButton');
@@ -35,6 +40,7 @@ const fields = {
   cashPrepayment: document.querySelector('#cashPrepayment'),
   prepaymentMethod: document.querySelector('#prepaymentMethod'),
   transferPrepayment: document.querySelector('#transferPrepayment'),
+  loyaltyRedemption: document.querySelector('#loyaltyRedemption'),
   customerName: document.querySelector('#customerName'),
   customerPhone: document.querySelector('#customerPhone'),
   customerAddress: document.querySelector('#customerAddress')
@@ -45,6 +51,8 @@ const summary = {
   productLabel: document.querySelector('#productLabel'),
   paymentTypeLabel: document.querySelector('#paymentTypeLabel'),
   prepaidTotal: document.querySelector('#prepaidTotal'),
+  loyaltyRow: document.querySelector('#loyaltySummaryRow'),
+  loyaltyRedemption: document.querySelector('#loyaltyRedemptionSummary'),
   installmentBaseLabel: document.querySelector('#installmentBaseLabel'),
   installmentBase: document.querySelector('#installmentBase'),
   commission: document.querySelector('#commission'),
@@ -58,6 +66,8 @@ const compactSummary = {
   productLabel: document.querySelector('#compactProductLabel'),
   paymentTypeLabel: document.querySelector('#compactPaymentTypeLabel'),
   prepaidTotal: document.querySelector('#compactPrepaidTotal'),
+  loyaltyRow: document.querySelector('#compactLoyaltyRow'),
+  loyaltyRedemption: document.querySelector('#compactLoyaltyRedemption'),
   installmentBaseLabel: document.querySelector('#compactInstallmentBaseLabel'),
   installmentBase: document.querySelector('#compactInstallmentBase'),
   finalTotal: document.querySelector('#compactFinalTotal'),
@@ -76,7 +86,13 @@ let searchTimer;
 let productSearchRequestId = 0;
 let customerSearchTimer;
 let duplicateCustomerTimer;
+let loyaltyCustomerTimer;
+let loyaltyRequestId = 0;
 let duplicateCustomer = null;
+let loyaltyCustomer = null;
+let loyaltyLoading = false;
+let loyaltyError = '';
+let lastCalculation = null;
 let submitInProgress = false;
 let selectedBranch = '';
 let productsLoading = false;
@@ -164,6 +180,17 @@ fields.prepaymentMethod.addEventListener('change', () => {
   updateCalculation();
 });
 
+if (fields.loyaltyRedemption) {
+  fields.loyaltyRedemption.addEventListener('input', () => {
+    normalizeLoyaltyRedemptionInput();
+    updateCalculation();
+  });
+  fields.loyaltyRedemption.addEventListener('blur', () => {
+    normalizeLoyaltyRedemptionInput({ forceZero: true });
+    updateCalculation();
+  });
+}
+
 addItemButton.addEventListener('click', () => {
   addItemRow();
 });
@@ -234,6 +261,7 @@ fields.customerName.addEventListener('input', () => {
 
 fields.customerPhone.addEventListener('input', () => {
   scheduleDuplicateCustomerCheck();
+  scheduleLoyaltyCustomerLoad();
 });
 
 for (const radio of document.querySelectorAll('input[name="customerMode"]')) {
@@ -276,6 +304,7 @@ form.addEventListener('submit', async (event) => {
     if (duplicateCustomer && getCustomerMode() === 'new') {
       throw new Error(`Такой клиент уже есть: ${duplicateCustomer.name}. Выберите режим "Старый клиент".`);
     }
+    validateLoyaltyBeforeSubmit();
 
     const payload = getPayload();
     payload.requestKey = crypto.randomUUID();
@@ -292,9 +321,11 @@ form.addEventListener('submit', async (event) => {
     const documentName = data.document?.name ? ` №${data.document.name}` : '';
     const documentTitle = getDocumentTitle(data.document?.type);
     const paymentText = data.document?.payment?.name ? ` Входящий платеж №${data.document.payment.name} создан.` : '';
+    const loyaltyText = getLoyaltyResultText(data.loyalty);
     lastCreatedOrder = { ...data, requestPayload: payload };
-    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}`);
-    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}`, 'success');
+    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${loyaltyText}`);
+    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${loyaltyText}`, 'success');
+    await loadLoyaltyCustomer();
   } catch (error) {
     setStatus(error.message, 'error');
   } finally {
@@ -834,6 +865,7 @@ function renderCustomerMode() {
     fields.customerPhone.value = '';
     fields.customerAddress.value = '';
   }
+  scheduleLoyaltyCustomerLoad();
 }
 
 function renderMissingCustomerAction() {
@@ -854,6 +886,7 @@ function applySelectedCustomer() {
   fields.customerName.value = customer.name || '';
   fields.customerPhone.value = customer.phone || '';
   fields.customerAddress.value = customer.actualAddress || '';
+  scheduleLoyaltyCustomerLoad();
 }
 
 function scheduleDuplicateCustomerCheck() {
@@ -907,10 +940,183 @@ function renderDuplicateCustomerWarning() {
   submitButton.disabled = Boolean(show) || submitInProgress;
 }
 
+function scheduleLoyaltyCustomerLoad() {
+  renderLoyaltyPanel();
+  window.clearTimeout(loyaltyCustomerTimer);
+  loyaltyCustomerTimer = window.setTimeout(() => {
+    loadLoyaltyCustomer();
+  }, 350);
+}
+
+async function loadLoyaltyCustomer() {
+  const requestId = ++loyaltyRequestId;
+  loyaltyCustomer = null;
+  loyaltyError = '';
+  loyaltyLoading = false;
+  renderLoyaltyPanel();
+
+  if (!isLoyaltyVisible()) {
+    return;
+  }
+
+  const phone = fields.customerPhone.value.trim();
+  if (!normalizePhone(phone)) {
+    return;
+  }
+
+  loyaltyLoading = true;
+  renderLoyaltyPanel();
+
+  try {
+    const params = new URLSearchParams({ phone });
+    const response = await fetch(`/api/loyalty/customer?${params}`);
+    const data = await response.json();
+    if (requestId !== loyaltyRequestId) {
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(data.error || 'Не удалось загрузить бонусы клиента.');
+    }
+    loyaltyCustomer = data.customer || null;
+    loyaltyError = '';
+    loyaltyLoading = false;
+    renderLoyaltyPanel();
+  } catch (error) {
+    if (requestId !== loyaltyRequestId) {
+      return;
+    }
+    loyaltyCustomer = null;
+    loyaltyError = error.message;
+    loyaltyLoading = false;
+    renderLoyaltyPanel();
+  }
+}
+
+function renderLoyaltyPanel() {
+  if (!loyaltyPanel || !config.loyalty?.enabled) {
+    return;
+  }
+
+  const visible = isLoyaltyVisible();
+  loyaltyPanel.classList.toggle('hidden', !visible);
+  if (!visible) {
+    if (fields.loyaltyRedemption) {
+      fields.loyaltyRedemption.value = '0';
+    }
+    return;
+  }
+
+  const balance = Number(loyaltyCustomer?.bonus_balance || 0);
+  const baseTotal = Number(lastCalculation?.baseTotal || 0);
+  const finalTotal = Number(lastCalculation?.finalTotal || baseTotal || 0);
+  const maxByPercent = baseTotal * Number(config.loyalty?.maxRedeemPercent || 0) / 100;
+  const maxRedeem = Math.floor(Math.max(0, Math.min(balance, maxByPercent)));
+  const adjusted = normalizeLoyaltyRedemptionInput({ maxRedeem });
+  let redemption = adjusted.value;
+  const canRedeem = Boolean(loyaltyCustomer) && maxRedeem > 0 && baseTotal > 0 && !loyaltyLoading && !loyaltyError;
+  let changedByDisable = false;
+  if (fields.loyaltyRedemption) {
+    fields.loyaltyRedemption.disabled = !canRedeem;
+    fields.loyaltyRedemption.max = String(maxRedeem);
+    if (!canRedeem && redemption > 0) {
+      fields.loyaltyRedemption.value = '0';
+      redemption = 0;
+      changedByDisable = true;
+    }
+  }
+  if ((adjusted.changed || changedByDisable) && orderItems.length) {
+    window.setTimeout(() => updateCalculation(), 0);
+  }
+
+  const percent = Number(config.loyalty?.accrualPercent || 0);
+  const accrualBase = Math.max(0, finalTotal);
+  const accrual = redemption > 0 ? 0 : Math.floor(accrualBase * percent / 100);
+
+  loyaltyBalance.textContent = `${formatNumber(balance)} бонусов`;
+  loyaltyLimitPreview.textContent = `Максимум списания: ${formatNumber(maxRedeem)} бонусов`;
+  loyaltyAccrualPreview.textContent = redemption > 0
+    ? 'Начислится: 0 бонусов при списании'
+    : `Начислится: ${formatNumber(accrual)} бонусов`;
+  if (loyaltyLoading) {
+    loyaltyStatus.textContent = 'Проверяю бонусы клиента...';
+  } else if (loyaltyError) {
+    loyaltyStatus.textContent = loyaltyError;
+  } else if (!normalizePhone(fields.customerPhone.value)) {
+    loyaltyStatus.textContent = 'Введите телефон клиента.';
+  } else if (loyaltyCustomer) {
+    loyaltyStatus.textContent = canRedeem
+      ? `Клиент найден: ${loyaltyCustomer.name || loyaltyCustomer.phone}`
+      : 'Клиент найден. Для списания добавьте товар или проверьте баланс.';
+  } else {
+    loyaltyStatus.textContent = 'Клиента в бонусной базе пока нет. Можно только начислить бонусы после покупки.';
+  }
+}
+
+function isLoyaltyVisible() {
+  return Boolean(config.loyalty?.enabled) && getCustomerMode() !== 'retail';
+}
+
+function normalizeLoyaltyRedemptionInput(options = {}) {
+  if (!fields.loyaltyRedemption) {
+    return { value: 0, changed: false };
+  }
+
+  const maxRedeem = Number.isFinite(Number(options.maxRedeem))
+    ? Math.max(0, Math.floor(Number(options.maxRedeem)))
+    : Infinity;
+  const raw = String(fields.loyaltyRedemption.value || '').replace(/\D/g, '');
+  let value = raw ? Number(raw) : 0;
+  if (!Number.isFinite(value) || value < 0) {
+    value = 0;
+  }
+  value = Math.floor(value);
+  if (Number.isFinite(maxRedeem)) {
+    value = Math.min(value, maxRedeem);
+  }
+  if (options.forceZero && !raw) {
+    value = 0;
+  }
+
+  const next = String(value);
+  const changed = fields.loyaltyRedemption.value !== next;
+  if (changed) {
+    fields.loyaltyRedemption.value = next;
+  }
+  return { value, changed };
+}
+
+function validateLoyaltyBeforeSubmit() {
+  const redemption = Number(normalizeLoyaltyRedemptionInput({ forceZero: true }).value || 0);
+  if (redemption <= 0) {
+    return;
+  }
+  if (!config.loyalty?.enabled) {
+    throw new Error('Бонусная система выключена. Уберите списание бонусов.');
+  }
+  if (getCustomerMode() === 'retail') {
+    throw new Error('Для розничного покупателя нельзя списывать бонусы. Выберите старого или нового клиента.');
+  }
+  if (loyaltyLoading) {
+    throw new Error('Подождите, система проверяет бонусы клиента.');
+  }
+  if (loyaltyError) {
+    throw new Error(`Бонусы не проверены: ${loyaltyError}`);
+  }
+  if (!loyaltyCustomer) {
+    throw new Error('Клиент еще не найден в бонусной базе. Можно только начислить бонусы после покупки.');
+  }
+  const balance = Number(loyaltyCustomer.bonus_balance || 0);
+  if (redemption > balance) {
+    throw new Error(`У клиента доступно только ${formatNumber(balance)} бонусов.`);
+  }
+}
+
 async function updateCalculation() {
   clearStatus();
   if (!orderItems.length) {
+    lastCalculation = null;
     renderEmptyCalculation();
+    renderLoyaltyPanel();
     return;
   }
 
@@ -922,11 +1128,15 @@ async function updateCalculation() {
     });
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.error || 'Ошибка расчета.');
+      throw new Error(formatApiError(data, 'Ошибка расчета.'));
     }
+    lastCalculation = data;
     renderCalculation(data);
+    renderLoyaltyPanel();
   } catch (error) {
+    lastCalculation = null;
     setStatus(error.message, 'error');
+    renderLoyaltyPanel();
   }
 }
 
@@ -936,6 +1146,7 @@ function renderEmptyCalculation() {
     productLabel: 'Добавьте товар',
     paymentType: getSelectedPaymentType()?.name || '',
     prepaidTotal: 0,
+    loyaltyRedemption: 0,
     installmentBaseLabel: 'Остаток',
     installmentBase: 0,
     commission: 0,
@@ -953,6 +1164,7 @@ function renderCalculation(data) {
     productLabel: data.items?.length > 1 ? `${data.items.length} товара` : data.items?.[0]?.productName || 'Выберите товар',
     paymentType: data.paymentType,
     prepaidTotal: data.prepaidTotal,
+    loyaltyRedemption: data.loyaltyRedemption || 0,
     installmentBaseLabel: getRemainderLabel(data),
     installmentBase: data.installmentBase,
     commission: data.commission,
@@ -973,6 +1185,11 @@ function renderSummary(target, data) {
   target.productLabel.textContent = data.productLabel;
   target.paymentTypeLabel.textContent = data.paymentType;
   target.prepaidTotal.textContent = formatSom(data.prepaidTotal);
+  if (target.loyaltyRow && target.loyaltyRedemption) {
+    const showLoyalty = Number(data.loyaltyRedemption || 0) > 0;
+    target.loyaltyRow.classList.toggle('hidden', !showLoyalty);
+    target.loyaltyRedemption.textContent = `-${formatSom(data.loyaltyRedemption)}`;
+  }
   target.installmentBaseLabel.textContent = data.installmentBaseLabel;
   target.installmentBase.textContent = formatSom(data.installmentBase);
   if (target.commission) {
@@ -991,6 +1208,7 @@ function getPayload() {
     cashPrepayment: fields.cashPrepayment.value,
     prepaymentMethodName: fields.prepaymentMethod.value,
     transferPrepayment: fields.transferPrepayment.value,
+    loyaltyRedemption: fields.loyaltyRedemption?.value || '0',
     paymentTypeName: selectedPaymentType?.name || '',
     paymentTypeHref: selectedPaymentType?.href || '',
     paymentTypeRate: selectedPaymentType?.rate ?? 0,
@@ -1130,6 +1348,26 @@ function showSuccessModal(data, message) {
   renderPrintReceipt(data);
 }
 
+function getLoyaltyResultText(loyalty) {
+  if (!loyalty?.enabled) {
+    return '';
+  }
+  if (loyalty.error) {
+    return ` Бонусы не обновились: ${loyalty.error}`;
+  }
+  const parts = [];
+  if (loyalty.redeemed > 0) {
+    parts.push(`списано ${formatNumber(loyalty.redeemed)}`);
+  }
+  if (loyalty.accrued > 0) {
+    parts.push(`начислено ${formatNumber(loyalty.accrued)}`);
+  }
+  if (loyalty.balance !== null && loyalty.balance !== undefined) {
+    parts.push(`остаток ${formatNumber(loyalty.balance)}`);
+  }
+  return parts.length ? ` Бонусы: ${parts.join(', ')}.` : '';
+}
+
 function getMoySkladWebUrl(document) {
   if (!document?.id || !document?.type) {
     return '';
@@ -1150,6 +1388,9 @@ function renderPrintReceipt(data) {
   const paymentType = calculation.paymentType || payload.paymentTypeName || '';
   const paid = Number(calculation.prepaidTotal || calculation.finalTotal || 0);
   const unpaid = Math.max(0, total - paid);
+  const loyalty = data?.loyalty || {};
+  const baseTotal = Number(calculation.baseTotal || total || 0);
+  const loyaltyRedemption = Number(calculation.loyaltyRedemption || 0);
 
   printReceipt.innerHTML = `
     <div class="thermal-receipt">
@@ -1177,10 +1418,15 @@ function renderPrintReceipt(data) {
       </div>
 
       <div class="receipt-line"></div>
-      <div class="receipt-total"><span>ИТОГО</span><b>${formatReceiptMoney(total)} сом</b></div>
+      <div class="receipt-row"><span>Сумма товаров:</span><b>${formatReceiptMoney(baseTotal)} сом</b></div>
+      ${loyaltyRedemption > 0 ? `<div class="receipt-row"><span>Бонусами:</span><b>-${formatReceiptMoney(loyaltyRedemption)} сом</b></div>` : ''}
+      <div class="receipt-total"><span>К ОПЛАТЕ</span><b>${formatReceiptMoney(total)} сом</b></div>
       <div class="receipt-row"><span>Тип оплаты:</span><b>${escapeHtml(paymentType || '-')}</b></div>
+      ${loyaltyRedemption > 0 ? `<div class="receipt-row"><span>Списано бонусов:</span><b>${formatNumber(loyaltyRedemption)}</b></div>` : ''}
       <div class="receipt-row"><span>Оплачено:</span><b>${formatReceiptMoney(paid)} сом</b></div>
       ${unpaid > 0 ? `<div class="receipt-row"><span>Не оплачено:</span><b>${formatReceiptMoney(unpaid)} сом</b></div>` : ''}
+      ${loyalty.accrued > 0 ? `<div class="receipt-row"><span>Бонусы начислено:</span><b>${formatNumber(loyalty.accrued)}</b></div>` : ''}
+      ${loyalty.balance !== null && loyalty.balance !== undefined ? `<div class="receipt-row"><span>Баланс бонусов:</span><b>${formatNumber(loyalty.balance)}</b></div>` : ''}
 
       <div class="receipt-line"></div>
       <div class="receipt-count">Позиций: ${rows.length}</div>
@@ -1324,6 +1570,12 @@ function formatSom(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(value)} сом`;
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 0
+  }).format(Number(value || 0));
 }
 
 function setStatus(message, type) {

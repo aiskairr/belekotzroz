@@ -9,11 +9,14 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = join(__dirname, 'public');
 
 loadDotEnv();
+loadDotEnv(join(__dirname, 'loyalty-lab/.env'));
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const MOYSKLAD_BASE_URL = 'https://api.moysklad.ru/api/remap/1.2';
 const MOYSKLAD_TIMEOUT_MS = 15000;
+const loyaltyAccrualPercent = Number(process.env.LOYALTY_ACCRUAL_PERCENT || process.env.LOYALTY_DEFAULT_PERCENT || 3);
+const loyaltyMaxRedeemPercent = Number(process.env.LOYALTY_MAX_REDEEM_PERCENT || 30);
 
 const paymentRateRules = {
   'M+': {
@@ -61,7 +64,8 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/config') {
       sendJson(res, 200, {
-        documentType: process.env.MOYSKLAD_DOCUMENT_TYPE || 'auto'
+        documentType: process.env.MOYSKLAD_DOCUMENT_TYPE || 'auto',
+        loyalty: getLoyaltyConfig()
       });
       return;
     }
@@ -114,6 +118,13 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/loyalty/customer') {
+      const phone = url.searchParams.get('phone') || '';
+      const customer = await getLoyaltyCustomer(phone);
+      sendJson(res, 200, { customer, loyalty: getLoyaltyConfig() });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/report/session') {
       sendJson(res, 200, { authenticated: isReportAuthenticated(req) });
       return;
@@ -143,6 +154,14 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/reports/returns') {
+      requireReportAuth(req);
+      const body = await readJson(req);
+      const result = await createReportReturn(body);
+      sendJson(res, 201, result);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/calculate') {
       const body = await readJson(req);
       sendJson(res, 200, calculate(body));
@@ -158,8 +177,10 @@ const server = createServer(async (req, res) => {
       }
 
       const result = calculate(body);
+      await assertLoyaltyRedemptionAllowed(result, body);
       const document = await createMoySkladDocument(result, body);
-      const payload = { calculation: result, document };
+      const loyalty = await applyLoyaltySafely(result, body, document);
+      const payload = { calculation: result, document, loyalty };
       if (requestKey) {
         recentOrders.set(requestKey, payload);
         setTimeout(() => recentOrders.delete(requestKey), 10 * 60 * 1000);
@@ -192,6 +213,7 @@ function calculate(input) {
   const cashPrepayment = toMoney(input.cashPrepayment || 0);
   const prepaymentMethodName = String(input.prepaymentMethodName || 'Наличными');
   const transferPrepayment = toMoney(input.transferPrepayment || 0);
+  const loyaltyRedemption = getValidatedLoyaltyRedemption(input);
   const paymentTypeName = String(input.paymentTypeName || input.bank || 'M+ (6 мес)');
   const paymentType = parsePaymentType(paymentTypeName);
   const months = paymentType.months;
@@ -205,19 +227,33 @@ function calculate(input) {
   if (!Number.isFinite(transferPrepayment) || transferPrepayment < 0) {
     throw httpError(400, 'Предоплата переводом не может быть отрицательной.');
   }
+  if (loyaltyRedemption > 0 && !getLoyaltyConfig().enabled) {
+    throw httpError(400, 'Бонусная система сейчас выключена.');
+  }
+  if (loyaltyRedemption > 0 && input.customerMode === 'retail') {
+    throw httpError(400, 'Для розничного покупателя нельзя списывать бонусы. Выберите старого или нового клиента.');
+  }
 
   const rate = getPaymentRate(paymentType.provider, months, input.paymentTypeRate);
 
   const baseTotal = roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
+  if (loyaltyRedemption > baseTotal) {
+    throw httpError(400, 'Нельзя списать бонусов больше суммы товара.');
+  }
+  const maxLoyaltyRedemption = roundMoney(baseTotal * getLoyaltyMaxRedeemPercent() / 100);
+  if (loyaltyRedemption > maxLoyaltyRedemption) {
+    throw httpError(400, `Можно списать бонусами не больше ${formatMoney(maxLoyaltyRedemption)} сом.`);
+  }
+  const payableTotal = roundMoney(baseTotal - loyaltyRedemption);
   const prepaidTotal = roundMoney(cashPrepayment + transferPrepayment);
-  if (prepaidTotal > baseTotal) {
+  if (prepaidTotal > payableTotal) {
     throw httpError(400, 'Предоплата не может быть больше суммы товара.');
   }
 
-  const installmentBase = roundMoney(baseTotal - prepaidTotal);
+  const installmentBase = roundMoney(payableTotal - prepaidTotal);
   const commission = roundMoney(installmentBase * rate);
-  const finalTotal = baseTotal;
-  const netTotal = roundMoney(baseTotal - commission);
+  const finalTotal = payableTotal;
+  const netTotal = roundMoney(payableTotal - commission);
   const costTotal = roundMoney(items.reduce((sum, item) => sum + item.costTotal, 0));
   const netProfit = roundMoney(netTotal - costTotal);
   const monthlyPayment = months > 0 ? roundMoney(installmentBase / months) : 0;
@@ -229,6 +265,8 @@ function calculate(input) {
     months,
     rate,
     baseTotal,
+    loyaltyRedemption,
+    payableTotal,
     cashPrepayment,
     prepaymentMethodName,
     transferPrepayment,
@@ -276,11 +314,14 @@ async function createMoySkladDocument(calculation, input) {
 
   const description = buildDocumentDescription(calculation);
 
+  const positions = buildPositions(calculation);
+  const documentTotal = fromMoySkladPrice(getPositionsTotal(positions));
+
   const payload = {
     organization: meta(organizationHref, 'organization'),
     agent: meta(agentHref, 'counterparty'),
     description,
-    positions: buildPositions(calculation)
+    positions
   };
 
   if (documentType === 'retaildemand') {
@@ -294,7 +335,7 @@ async function createMoySkladDocument(calculation, input) {
       throw httpError(400, 'Для выбранной точки продаж нет открытой смены.');
     }
     payload.retailShift = meta(retailShiftHref, 'retailshift');
-    Object.assign(payload, getRetailPaymentSums(calculation));
+    Object.assign(payload, getRetailPaymentSums(calculation, documentTotal));
   } else if (storeHref) {
     payload.store = meta(storeHref, 'store');
   }
@@ -469,6 +510,9 @@ function buildDocumentDescription(calculation) {
     lines.push(`${calculation.prepaymentMethodName}: ${formatMoney(paidAmount)} сом.`);
     lines.push(`${paymentName}: ${formatMoney(unpaidAmount)} сом.`);
   }
+  if (calculation.loyaltyRedemption > 0) {
+    lines.push(`Бонусы списано: ${formatMoney(calculation.loyaltyRedemption)} сом.`);
+  }
 
   return lines.slice(0, 4).join('\n');
 }
@@ -589,20 +633,63 @@ function getOrderItems(input) {
 }
 
 function buildPositions(calculation) {
-  return calculation.items.map((item) => ({
+  const discounts = distributeLoyaltyDiscount(calculation);
+  return calculation.items.map((item, index) => ({
     quantity: item.quantity,
     price: toMoySkladPrice(item.productPrice),
+    ...(discounts[index] > 0 ? { discount: discounts[index] } : {}),
     assortment: meta(item.assortmentHref, item.assortmentType)
   }));
 }
 
-function getRetailPaymentSums(calculation) {
+function distributeLoyaltyDiscount(calculation) {
+  const targetDiscount = toMoySkladPrice(calculation.loyaltyRedemption || 0);
+  if (targetDiscount <= 0) {
+    return calculation.items.map(() => 0);
+  }
+
+  const lineTotals = calculation.items.map((item) => toMoySkladPrice(item.lineTotal));
+  const total = lineTotals.reduce((sum, value) => sum + value, 0);
+  if (total <= 0) {
+    return calculation.items.map(() => 0);
+  }
+
+  let distributed = 0;
+  const lineDiscounts = lineTotals.map((lineTotal, index) => {
+    if (index === lineTotals.length - 1) {
+      return Math.max(0, targetDiscount - distributed);
+    }
+    const value = Math.round(targetDiscount * lineTotal / total);
+    distributed += value;
+    return value;
+  });
+
+  return calculation.items.map((item, index) => {
+    const lineTotal = lineTotals[index];
+    if (lineTotal <= 0) {
+      return 0;
+    }
+    return Number((lineDiscounts[index] / lineTotal * 100).toFixed(6));
+  });
+}
+
+function getPositionsTotal(positions) {
+  return positions.reduce((sum, position) => {
+    const quantity = Number(position.quantity || 0);
+    const price = Number(position.price || 0);
+    const discount = Number(position.discount || 0);
+    return sum + Math.round(price * quantity * Math.max(0, 100 - discount) / 100);
+  }, 0);
+}
+
+function getRetailPaymentSums(calculation, documentTotal = calculation.finalTotal) {
   const paymentName = String(calculation.paymentType || '').toLowerCase();
   const prepaidTotal = roundMoney(calculation.cashPrepayment + calculation.transferPrepayment);
+  const total = roundMoney(documentTotal);
 
   if (prepaidTotal <= 0 && (paymentName.includes('налич') || paymentName.includes('cash'))) {
     return {
-      cashSum: toMoySkladPrice(calculation.finalTotal),
+      cashSum: toMoySkladPrice(total),
       noCashSum: 0
     };
   }
@@ -610,14 +697,14 @@ function getRetailPaymentSums(calculation) {
   if (prepaidTotal <= 0 && (paymentName.includes('карта') || paymentName.includes('qr'))) {
     return {
       cashSum: 0,
-      noCashSum: toMoySkladPrice(calculation.finalTotal)
+      noCashSum: toMoySkladPrice(total)
     };
   }
 
-  const prepaidAmount = roundMoney(Math.min(calculation.cashPrepayment, calculation.finalTotal));
+  const prepaidAmount = roundMoney(Math.min(calculation.cashPrepayment, total));
   const prepaymentIsCash = isCashPrepaymentMethod(calculation.prepaymentMethodName);
   const cashSum = prepaymentIsCash ? prepaidAmount : 0;
-  const noCashSum = roundMoney(calculation.finalTotal - cashSum);
+  const noCashSum = roundMoney(total - cashSum);
   return {
     cashSum: toMoySkladPrice(cashSum),
     noCashSum: toMoySkladPrice(noCashSum)
@@ -987,7 +1074,7 @@ async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo
       offset: String(offset),
       order: 'moment,desc',
       filter: filters.join(';'),
-      expand: 'agent,organization,store,retailStore,positions,positions.assortment'
+      expand: 'agent,organization,store,retailStore,retailShift,positions,positions.assortment'
     });
 
     const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}?${params}`, {
@@ -1034,9 +1121,13 @@ function mapReportDocument(document) {
     storeName: document.retailStore?.name || document.store?.name || '',
     organizationName: document.organization?.name || '',
     customerName: document.agent?.name || '',
+    customerPhone: getReportPhone(document),
+    customerAddress: getReportAddress(document),
+    webUrl: getMoySkladWebUrl(documentType, document.id),
     paymentType: getReportPaymentType(document, documentType),
     employeeName: getReportTextAttribute(document, 'EMPLOYEE', documentType),
-    products: positions.map((position) => ({
+    products: positions.map((position, index) => ({
+      index,
       code: position.assortment?.code || '',
       name: position.assortment?.name || position.name || 'Товар',
       quantity: Number(position.quantity || 0),
@@ -1057,6 +1148,266 @@ function mapReportDocument(document) {
   };
 }
 
+async function createReportReturn(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const documentType = String(input.documentType || '');
+  const documentId = String(input.documentId || '');
+  const productIndex = Number(input.productIndex);
+  const quantity = Number(input.quantity || 0);
+
+  if (!['retaildemand', 'demand'].includes(documentType)) {
+    throw httpError(400, 'Возврат можно создать только по продаже или отгрузке.');
+  }
+  if (!documentId) {
+    throw httpError(400, 'Не найден документ для возврата.');
+  }
+  if (!Number.isInteger(productIndex) || productIndex < 0) {
+    throw httpError(400, 'Не найден товар для возврата.');
+  }
+
+  const original = await getMoySkladDocumentForReturn(token, documentType, documentId);
+  const positions = Array.isArray(original.positions?.rows) ? original.positions.rows : [];
+  const position = positions[productIndex];
+  if (!position) {
+    throw httpError(400, 'Товар не найден в документе.');
+  }
+
+  const returnQuantity = quantity > 0 ? quantity : Number(position.quantity || 0);
+  if (returnQuantity <= 0 || returnQuantity > Number(position.quantity || 0)) {
+    throw httpError(400, 'Количество возврата указано неверно.');
+  }
+
+  const returnType = documentType === 'retaildemand' ? 'retailsalesreturn' : 'salesreturn';
+  const payload = buildReturnPayload(original, documentType, position, returnQuantity);
+
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${returnType}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json;charset=utf-8'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось создать возврат в МойСклад.', data);
+  }
+
+  return {
+    document: {
+      id: data.id,
+      name: data.name,
+      type: returnType,
+      webUrl: getMoySkladWebUrl(returnType, data.id)
+    }
+  };
+}
+
+async function applyLoyalty(calculation, input, document) {
+  const config = getLoyaltyConfig();
+  if (!config.enabled || input.customerMode === 'retail') {
+    return null;
+  }
+
+  const phone = normalizePhone(input.customerPhone);
+  if (!phone) {
+    return null;
+  }
+
+  const saleId = [document.type, document.id].filter(Boolean).join(':');
+  const result = {
+    enabled: true,
+    redeemed: 0,
+    accrued: 0,
+    balance: null,
+    customer: null
+  };
+
+  if (calculation.loyaltyRedemption > 0) {
+    const rows = await supabaseRpc('loyalty_redeem', {
+      p_phone: phone,
+      p_sale_id: saleId,
+      p_amount: Math.round(calculation.loyaltyRedemption),
+      p_comment: `Списание по документу ${document.name || saleId}`
+    });
+    const redemption = rows[0];
+    result.redeemed = redemption?.transaction_amount || Math.round(calculation.loyaltyRedemption);
+    result.balance = redemption?.bonus_balance ?? result.balance;
+    result.customer = redemption ? rpcLoyaltyCustomer(redemption) : result.customer;
+  }
+
+  const accrueBase = Math.round(calculation.finalTotal || 0);
+  const shouldAccrue = calculation.loyaltyRedemption <= 0;
+  if (shouldAccrue && accrueBase > 0 && config.accrualPercent > 0) {
+    const rows = await supabaseRpc('loyalty_accrue', {
+      p_phone: phone,
+      p_name: String(input.customerName || '').trim(),
+      p_sale_id: saleId,
+      p_sale_amount: accrueBase,
+      p_percent: config.accrualPercent,
+      p_comment: `Начисление по документу ${document.name || saleId}`
+    });
+    const accrual = rows[0];
+    result.accrued = accrual?.transaction_amount || 0;
+    result.balance = accrual?.bonus_balance ?? result.balance;
+    result.customer = accrual ? rpcLoyaltyCustomer(accrual) : result.customer;
+  }
+
+  return result;
+}
+
+async function assertLoyaltyRedemptionAllowed(calculation, input) {
+  if (!calculation.loyaltyRedemption) {
+    return;
+  }
+  const config = getLoyaltyConfig();
+  if (!config.enabled) {
+    throw httpError(400, 'Бонусная система выключена.');
+  }
+  if (input.customerMode === 'retail') {
+    throw httpError(400, 'Для розничного покупателя нельзя списать бонусы.');
+  }
+
+  const customer = await getLoyaltyCustomer(input.customerPhone);
+  if (!customer) {
+    throw httpError(400, 'Клиент еще не найден в бонусной базе. Сначала можно только начислить бонусы после покупки.');
+  }
+  if (Number(customer.bonus_balance || 0) < calculation.loyaltyRedemption) {
+    throw httpError(400, `У клиента доступно только ${formatMoney(customer.bonus_balance || 0)} бонусов.`);
+  }
+}
+
+async function applyLoyaltySafely(calculation, input, document) {
+  try {
+    return await applyLoyalty(calculation, input, document);
+  } catch (error) {
+    return {
+      enabled: getLoyaltyConfig().enabled,
+      error: error.message || 'Не удалось выполнить бонусную операцию.'
+    };
+  }
+}
+
+async function getLoyaltyCustomer(phone) {
+  if (!getLoyaltyConfig().enabled) {
+    return null;
+  }
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) {
+    return null;
+  }
+  const rows = await supabaseGet('/rest/v1/loyalty_customers', {
+    phone: `eq.${normalizedPhone}`,
+    select: 'id,phone,name,bonus_balance,created_at,updated_at',
+    limit: '1'
+  });
+  return rows[0] || null;
+}
+
+function rpcLoyaltyCustomer(row) {
+  return {
+    id: row.customer_id,
+    phone: row.phone,
+    name: row.name,
+    bonus_balance: row.bonus_balance
+  };
+}
+
+function getLoyaltyConfig() {
+  const configured = String(process.env.LOYALTY_ENABLED || '').toLowerCase();
+  const enabledByEnv = configured ? ['1', 'true', 'yes', 'on'].includes(configured) : Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  return {
+    enabled: enabledByEnv && Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+    accrualPercent: Number.isFinite(loyaltyAccrualPercent) ? loyaltyAccrualPercent : 3,
+    maxRedeemPercent: getLoyaltyMaxRedeemPercent()
+  };
+}
+
+function getLoyaltyMaxRedeemPercent() {
+  return Number.isFinite(loyaltyMaxRedeemPercent) ? loyaltyMaxRedeemPercent : 30;
+}
+
+function getValidatedLoyaltyRedemption(input) {
+  const amount = toMoney(input.loyaltyRedemption || 0);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw httpError(400, 'Сумма списания бонусов должна быть числом больше или равна нулю.');
+  }
+  if (!Number.isInteger(amount)) {
+    throw httpError(400, 'Бонусы списываются только целым числом.');
+  }
+  return amount;
+}
+
+async function getMoySkladDocumentForReturn(token, documentType, documentId) {
+  const params = new URLSearchParams({
+    expand: 'agent,organization,store,retailStore,retailShift,positions,positions.assortment'
+  });
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}/${documentId}?${params}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось загрузить исходный документ для возврата.', data);
+  }
+  return data;
+}
+
+function buildReturnPayload(original, documentType, position, quantity) {
+  const returnSum = roundMoney(fromMoySkladPrice(position.price) * quantity);
+  const payload = {
+    organization: original.organization,
+    agent: original.agent,
+    description: `Возврат товара из документа ${original.name || ''}`.trim(),
+    positions: [
+      {
+        quantity,
+        price: position.price,
+        assortment: position.assortment
+      }
+    ]
+  };
+
+  if (documentType === 'retaildemand') {
+    payload.retailDemand = original.meta;
+  } else {
+    payload.demand = original.meta;
+  }
+
+  if (original.store) {
+    payload.store = original.store;
+  }
+
+  if (documentType === 'retaildemand') {
+    payload.retailStore = original.retailStore;
+    if (original.retailShift) {
+      payload.retailShift = original.retailShift;
+    }
+    Object.assign(payload, getRetailReturnPaymentSums(original, returnSum));
+  }
+
+  return payload;
+}
+
+function getRetailReturnPaymentSums(original, returnSum) {
+  const cash = fromMoySkladPrice(original.cashSum);
+  const noCash = fromMoySkladPrice(original.noCashSum);
+  const total = roundMoney(cash + noCash);
+  if (total <= 0) {
+    return { cashSum: 0, noCashSum: toMoySkladPrice(returnSum) };
+  }
+  const cashPart = roundMoney(returnSum * cash / total);
+  const noCashPart = roundMoney(returnSum - cashPart);
+  return {
+    cashSum: toMoySkladPrice(cashPart),
+    noCashSum: toMoySkladPrice(noCashPart)
+  };
+}
+
 function buildReportProductText(productLines) {
   if (!productLines.length) {
     return '';
@@ -1065,6 +1416,50 @@ function buildReportProductText(productLines) {
     return productLines.join(', ');
   }
   return `${productLines.slice(0, 3).join(', ')} и еще ${productLines.length - 3}`;
+}
+
+function getReportPhone(document) {
+  return document.agent?.phone || document.agent?.phoneNumber || document.agent?.phones?.[0] || '';
+}
+
+function getReportAddress(document) {
+  return normalizeReportAddress(
+    document.shipmentAddress ||
+    document.deliveryAddress ||
+    document.agent?.actualAddress ||
+    document.agent?.legalAddress ||
+    document.agent?.actualAddressFull ||
+    document.agent?.legalAddressFull
+  );
+}
+
+function normalizeReportAddress(address) {
+  if (!address) {
+    return '';
+  }
+  if (typeof address === 'string') {
+    return address;
+  }
+  return [
+    address.postalCode,
+    address.country,
+    address.region,
+    address.city,
+    address.street,
+    address.house,
+    address.apartment,
+    address.addInfo
+  ].map(formatReportAddressPart).filter(Boolean).join(', ');
+}
+
+function formatReportAddressPart(part) {
+  if (!part) {
+    return '';
+  }
+  if (typeof part === 'object') {
+    return part.name || part.value || '';
+  }
+  return String(part);
 }
 
 function getReportPaymentType(document, documentType) {
@@ -1141,6 +1536,13 @@ function getDocumentTypeLabel(type) {
     return 'Заказ';
   }
   return 'Документ';
+}
+
+function getMoySkladWebUrl(type, id) {
+  if (!type || !id) {
+    return '';
+  }
+  return `https://online.moysklad.ru/app/#${type}/edit?id=${encodeURIComponent(id)}`;
 }
 
 function fromMoySkladPrice(value) {
@@ -1387,6 +1789,48 @@ async function moySkladFetch(url, options = {}) {
   }
 }
 
+async function supabaseGet(apiPath, params = {}) {
+  const url = new URL(`${getSupabaseUrl()}${apiPath}`);
+  Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
+  return supabaseFetch(url, { method: 'GET' });
+}
+
+async function supabaseRpc(name, body) {
+  return supabaseFetch(`${getSupabaseUrl()}/rest/v1/rpc/${name}`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+}
+
+async function supabaseFetch(url, options = {}) {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!getSupabaseUrl() || !key) {
+    throw httpError(500, 'Бонусная система включена, но не заполнены SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY.');
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...(options.headers || {})
+    }
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    throw httpError(response.status, data?.message || data?.hint || 'Supabase вернул ошибку.', data);
+  }
+  return data || [];
+}
+
+function getSupabaseUrl() {
+  return String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+}
+
 function meta(href, type) {
   return {
     meta: {
@@ -1532,9 +1976,8 @@ function httpError(status, message, details) {
   return error;
 }
 
-function loadDotEnv() {
+function loadDotEnv(envPath = join(__dirname, '.env')) {
   try {
-    const envPath = join(__dirname, '.env');
     const content = process.env.NODE_ENV === 'test' ? '' : readFileSync(envPath, 'utf8');
     for (const line of content.split('\n')) {
       const trimmed = line.trim();
