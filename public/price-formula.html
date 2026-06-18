@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Расчет цен</title>
+    <link rel="stylesheet" href="/price-formula.css">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main class="formula-app">
+      <section id="formulaPanel" class="formula-panel hidden">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">МойСклад</p>
+            <h1>Расчет цен</h1>
+            <p>Закупочная цена в USD переводится в сомы, формирует минимальную цену, а цены 3-6 и 9-12 считаются от минимальной.</p>
+          </div>
+          <a class="back-link" href="/prices.html">Открыть массовое редактирование</a>
+        </header>
+
+        <section class="template-card">
+          <label>
+            <span>Группа / подгруппа для шаблона</span>
+            <select id="folderSelect">
+              <option value="">Выберите группу</option>
+            </select>
+          </label>
+          <label>
+            <span>Шаблон из групп</span>
+            <select id="templateSelect">
+              <option value="">Нет сохраненных шаблонов</option>
+            </select>
+          </label>
+          <label>
+            <span>Название шаблона</span>
+            <input id="templateNameInput" type="text" placeholder="Например: Встройка стандарт">
+          </label>
+          <button id="saveTemplateButton" type="button">Сохранить в группу</button>
+          <button id="assignTemplateButton" class="secondary" type="button">Скопировать в группу</button>
+          <button id="deleteTemplateButton" class="secondary danger" type="button">Удалить из группы</button>
+          <p id="groupTemplateStatus" class="template-status">Выберите группу, чтобы создать или применить шаблон.</p>
+        </section>
+
+        <section class="formula-card">
+          <div class="formula-controls formula-controls-wide">
+            <label>
+              <span>Тип цены 3-6</span>
+              <select id="priceType36Select"></select>
+            </label>
+            <label>
+              <span>Тип цены 9-12</span>
+              <select id="priceType912Select"></select>
+            </label>
+            <label>
+              <span>Курс USD -> KGS</span>
+              <input id="usdRateInput" type="number" min="0" step="0.01" value="89">
+            </label>
+            <label>
+              <span>Наценка минимума</span>
+              <input id="markupInput" type="number" min="0" step="0.01" value="20">
+            </label>
+            <label>
+              <span>Тип наценки</span>
+              <select id="markupModeSelect">
+                <option value="percent">Процент</option>
+                <option value="money">Сомы</option>
+                <option value="tiers">Диапазоны USD</option>
+              </select>
+            </label>
+            <label>
+              <span>Банк 3-6, %</span>
+              <input id="bank36Input" type="number" min="0" step="0.01" value="10">
+            </label>
+            <label>
+              <span>Банк 9-12, %</span>
+              <input id="bank912Input" type="number" min="0" step="0.01" value="20">
+            </label>
+            <label>
+              <span>Округление</span>
+              <select id="roundingSelect">
+                <option value="0">Не округлять</option>
+                <option value="1">До 1 сома</option>
+                <option value="10" selected>До 10 сом</option>
+                <option value="100">До 100 сом</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="toolbar">
+          <label class="search-field">
+            <span>Поиск товара</span>
+            <input id="searchInput" type="search" placeholder="Название, код или артикул">
+          </label>
+          <label class="folder-field">
+            <span>Активная группа</span>
+            <input id="folderLabel" type="text" value="Все группы" disabled>
+          </label>
+          <button id="supplyProductsButton" class="secondary" type="button">Товары из приемки</button>
+          <button id="selectFolderButton" class="secondary" type="button">Выбрать группу</button>
+          <button id="reloadButton" class="secondary" type="button">Обновить каталог</button>
+          <button id="calculateButton" type="button">Рассчитать выбранные</button>
+        </section>
+
+        <section id="tierCard" class="tier-card hidden">
+          <div class="tier-title">
+            <div>
+              <p class="eyebrow">Диапазоны</p>
+              <h2>Наценка по закупочной цене</h2>
+              <p>Если закупка попадает в диапазон USD, к цене в сомах добавится указанная сумма.</p>
+            </div>
+            <button id="addTierButton" class="secondary" type="button">Добавить диапазон</button>
+          </div>
+          <div class="tier-table">
+            <div class="tier-head">
+              <span>От USD</span>
+              <span>До USD</span>
+              <span>Наценка, сом</span>
+              <span></span>
+            </div>
+            <div id="tierRows"></div>
+          </div>
+          <div class="fallback-row">
+            <label>
+              <span>Если товар вне диапазонов</span>
+              <select id="fallbackMarkupModeSelect">
+                <option value="percent">Наценить процентом</option>
+                <option value="money">Добавить сумму</option>
+              </select>
+            </label>
+            <label>
+              <span>Запасная наценка</span>
+              <input id="fallbackMarkupInput" type="number" min="0" step="0.01" value="20">
+            </label>
+          </div>
+        </section>
+
+        <section class="summary-grid">
+          <article><span>Загружено / всего</span><strong id="catalogCount">0</strong></article>
+          <article><span>Выбрано</span><strong id="selectedCount">0</strong></article>
+          <article><span>Рассчитано</span><strong id="changedCount">0</strong></article>
+          <article><span>Пропущено</span><strong id="skippedCount">0</strong></article>
+        </section>
+
+        <section class="table-card">
+          <div class="table-title">
+            <div>
+              <h2>Товары</h2>
+              <p id="catalogStatus" class="status">Загрузка каталога...</p>
+            </div>
+            <button id="saveButton" class="save-button" type="button" disabled>Сохранить цены</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input id="selectPage" type="checkbox" aria-label="Выбрать товары на странице"></th>
+                  <th>Код</th>
+                  <th>Наименование</th>
+                  <th>Шаблон группы</th>
+                  <th>Закупка</th>
+                  <th>Мин. сейчас</th>
+                  <th>Мин. новая</th>
+                  <th>3-6 сейчас</th>
+                  <th>3-6 новая</th>
+                  <th>9-12 сейчас</th>
+                  <th>9-12 новая</th>
+                </tr>
+              </thead>
+              <tbody id="productRows"></tbody>
+            </table>
+          </div>
+          <footer class="pagination">
+            <button id="prevPage" class="secondary" type="button">Назад</button>
+            <span id="pageLabel">Страница 1</span>
+            <button id="nextPage" class="secondary" type="button">Вперед</button>
+          </footer>
+        </section>
+      </section>
+    </main>
+    <script src="/price-formula.js?v=20260618-supply-template" type="module"></script>
+  </body>
+</html>

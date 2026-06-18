@@ -1,7 +1,6 @@
-const loginPanel = document.querySelector('#loginPanel');
+import { initCrmShell } from './crm-shell.js';
+
 const reportPanel = document.querySelector('#reportPanel');
-const loginForm = document.querySelector('#loginForm');
-const loginStatus = document.querySelector('#loginStatus');
 const filtersForm = document.querySelector('#filtersForm');
 const reportStatus = document.querySelector('#reportStatus');
 const reportRows = document.querySelector('#reportRows');
@@ -30,38 +29,11 @@ init();
 async function init() {
   setPeriod('today');
   bindEvents();
-  const session = await api('/api/report/session').catch(() => ({ authenticated: false }));
-  if (session.authenticated) {
-    showReport();
-  }
+  const user = await initCrmShell({ page: 'reports', allowedRoles: ['admin', 'owner', 'accountant', 'employee'] });
+  if (user) await showReport();
 }
 
 function bindEvents() {
-  loginForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    loginStatus.textContent = 'Проверяю доступ...';
-
-    try {
-      await api('/api/report/login', {
-        method: 'POST',
-        body: {
-          login: document.querySelector('#login').value,
-          password: document.querySelector('#password').value
-        }
-      });
-      loginStatus.textContent = '';
-      showReport();
-    } catch (error) {
-      loginStatus.textContent = error.message;
-    }
-  });
-
-  document.querySelector('#logoutButton').addEventListener('click', async () => {
-    await api('/api/report/logout', { method: 'POST', body: {} }).catch(() => {});
-    reportPanel.classList.add('hidden');
-    loginPanel.classList.remove('hidden');
-  });
-
   filtersForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     currentPeriod = 'custom';
@@ -93,7 +65,6 @@ function bindEvents() {
 }
 
 async function showReport() {
-  loginPanel.classList.add('hidden');
   reportPanel.classList.remove('hidden');
   await loadRetailStores();
   await loadReport();

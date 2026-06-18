@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Журнал действий</title>
+    <link rel="stylesheet" href="/audit.css">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main class="audit-app">
+      <section id="auditPanel" class="audit-panel hidden">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Контроль системы</p>
+            <h1>Журнал действий</h1>
+            <p>Продажи, возвраты, изменение цен и входы сотрудников.</p>
+          </div>
+        </header>
+
+        <section class="summary-grid">
+          <article><span>Всего записей</span><strong id="totalCount">0</strong></article>
+          <article><span>Продажи</span><strong id="salesCount">0</strong></article>
+          <article><span>Возвраты</span><strong id="returnsCount">0</strong></article>
+          <article><span>Изменения цен</span><strong id="pricesCount">0</strong></article>
+        </section>
+
+        <section class="toolbar">
+          <label class="search-field">
+            <span>Поиск</span>
+            <input id="searchInput" type="search" placeholder="Сотрудник, действие или документ">
+          </label>
+          <label>
+            <span>Действие</span>
+            <select id="actionFilter">
+              <option value="">Все действия</option>
+              <option value="sale.create">Создание продажи</option>
+              <option value="return">Возврат</option>
+              <option value="prices.update">Изменение цен</option>
+              <option value="login">Вход</option>
+              <option value="logout">Выход</option>
+            </select>
+          </label>
+          <label>
+            <span>Пользователь</span>
+            <select id="userFilter"><option value="">Все пользователи</option></select>
+          </label>
+          <button id="refreshButton" type="button">Обновить</button>
+        </section>
+
+        <section class="table-card">
+          <div class="table-title">
+            <div>
+              <h2>Последние действия</h2>
+              <p id="auditStatus" class="status"></p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Дата и время</th>
+                  <th>Пользователь</th>
+                  <th>Роль</th>
+                  <th>Действие</th>
+                  <th>Описание</th>
+                  <th>Объект</th>
+                </tr>
+              </thead>
+              <tbody id="auditRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/audit.js" type="module"></script>
+  </body>
+</html>

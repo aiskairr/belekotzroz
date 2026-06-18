@@ -7,8 +7,16 @@
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <a class="report-link" href="/report.html" aria-label="Отчетность для владельцев">Отчет</a>
-    <a class="about-link" href="/about.html" aria-label="О системе">О системе</a>
+    <section id="crmLoginScreen" class="crm-login-screen">
+      <form id="crmLoginForm" class="crm-login-card">
+        <div class="crm-login-brand"><span>O</span><div><strong>Ordo CRM</strong><small>Продажи, учет и автоматизация</small></div></div>
+        <div><p class="eyebrow">Защищенный доступ</p><h1>Вход в систему</h1><p>Возможности CRM зависят от вашей роли.</p></div>
+        <label><span>Логин</span><input id="crmLogin" autocomplete="username" required></label>
+        <label><span>Пароль</span><input id="crmPassword" type="password" autocomplete="current-password" required></label>
+        <button type="submit">Войти</button>
+        <p id="crmLoginStatus" class="status"></p>
+      </form>
+    </section>
 
     <div id="appPreloader" class="app-preloader">
       <div class="app-preloader-box">
@@ -28,7 +36,56 @@
       </div>
     </section>
 
+    <aside id="crmSidebar" class="crm-sidebar hidden">
+      <div class="crm-brand">
+        <span class="crm-brand-mark">O</span>
+        <div><strong>Ordo CRM</strong><small>МойСклад</small></div>
+      </div>
+      <nav class="crm-nav" aria-label="Основная навигация">
+        <a class="active" href="/" data-roles="admin owner employee">Продажи</a>
+        <a href="/report.html" data-roles="admin owner accountant employee">Отчетность</a>
+        <a href="/prices.html" data-roles="admin owner accountant">Бухгалтерия</a>
+        <a href="/price-formula.html" data-roles="admin owner accountant">Расчет цен</a>
+        <a href="/audit.html" data-roles="admin owner">Журнал действий</a>
+        <a href="/about.html">О системе</a>
+      </nav>
+      <div class="crm-sidebar-foot">
+        <button id="openSettingsButton" class="crm-settings-button" type="button">Настройки</button>
+        <div class="crm-user-mini">
+          <span>OR</span>
+          <div><strong id="sidebarUserName">Ordo</strong><small id="sidebarUserRole">Рабочий профиль</small></div>
+        </div>
+      </div>
+    </aside>
+
+    <header id="crmTopbar" class="crm-topbar hidden">
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Открыть меню">☰</button>
+      <div>
+        <strong>Оформление продажи</strong>
+        <span id="crmBranchLabel">Филиал не выбран</span>
+      </div>
+      <div class="crm-topbar-actions">
+        <span class="crm-sync-status"><i></i> МойСклад подключен</span>
+        <span id="draftStatus" class="draft-status">Черновик не сохранен</span>
+        <button id="clearDraftButton" class="clear-draft-button" type="button">Очистить черновик</button>
+        <button id="topSettingsButton" class="profile-button" type="button"><span id="profileInitials">OR</span><b id="topUserName">Ordo</b></button>
+      </div>
+    </header>
+
     <main class="app">
+      <section class="crm-overview wide">
+        <div>
+          <p class="eyebrow">Рабочее место сотрудника</p>
+          <h1>Новая продажа</h1>
+          <p>Добавьте товары, выберите оплату и создайте документ в МойСклад.</p>
+        </div>
+        <div class="process-steps" aria-label="Этапы продажи">
+          <span class="active"><b>1</b> Товары</span>
+          <span><b>2</b> Оплата</span>
+          <span><b>3</b> Клиент</span>
+          <span><b>4</b> Документ</span>
+        </div>
+      </section>
       <section class="panel">
         <div class="heading">
           <p class="eyebrow">Расчет рассрочки</p>
@@ -252,8 +309,56 @@
       </div>
     </section>
 
+    <section id="settingsModal" class="modal hidden" aria-modal="true" role="dialog">
+      <div class="settings-card">
+        <div class="settings-head">
+          <div><p class="eyebrow">Персонализация</p><h2>Настройки CRM</h2></div>
+          <button id="closeSettingsButton" class="modal-close" type="button" aria-label="Закрыть">×</button>
+        </div>
+
+        <section class="settings-section">
+          <div><h3>Цвет интерфейса</h3><p>Выберите основной цвет кнопок и активных элементов.</p></div>
+          <div class="color-swatches" id="colorSwatches">
+            <button type="button" data-theme="blue" style="--swatch:#2563eb" aria-label="Синий"></button>
+            <button type="button" data-theme="green" style="--swatch:#16805b" aria-label="Зеленый"></button>
+            <button type="button" data-theme="violet" style="--swatch:#6d5bd0" aria-label="Фиолетовый"></button>
+            <button type="button" data-theme="red" style="--swatch:#c2414b" aria-label="Красный"></button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div><h3>Плотность</h3><p>Компактный режим помещает больше полей на экране.</p></div>
+          <div class="segmented-control">
+            <button type="button" data-density="comfortable">Обычная</button>
+            <button type="button" data-density="compact">Компактная</button>
+          </div>
+        </section>
+
+        <section class="settings-section settings-list">
+          <label class="toggle-row">
+            <div><strong>Подтверждать создание</strong><span>Показывать проверку перед отправкой в МойСклад</span></div>
+            <input id="confirmBeforeSubmit" type="checkbox">
+          </label>
+          <label class="toggle-row">
+            <div><strong>Фокус на поиск товара</strong><span>После добавления сразу искать следующий товар</span></div>
+            <input id="focusProductSearch" type="checkbox">
+          </label>
+          <label class="toggle-row">
+            <div><strong>Закрепить итог</strong><span>Итог продажи остается видимым при прокрутке</span></div>
+            <input id="stickySummary" type="checkbox">
+          </label>
+        </section>
+
+        <div class="settings-actions">
+          <button id="crmLogoutButton" class="danger-button" type="button">Выйти из CRM</button>
+          <button id="resetSettingsButton" class="secondary-button" type="button">Сбросить</button>
+          <button id="saveSettingsButton" type="button">Сохранить настройки</button>
+        </div>
+      </div>
+    </section>
+
     <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
-    <script src="/app.js" type="module"></script>
+    <script src="/app.js?v=20260618-submit-fix" type="module"></script>
   </body>
 </html>

@@ -25,6 +25,31 @@ const printDocumentButton = document.querySelector('#printDocumentButton');
 const openMoyskladButton = document.querySelector('#openMoyskladButton');
 const closeSuccessModalButton = document.querySelector('#closeSuccessModalButton');
 const printReceipt = document.querySelector('#printReceipt');
+const crmLoginScreen = document.querySelector('#crmLoginScreen');
+const crmLoginForm = document.querySelector('#crmLoginForm');
+const crmLoginStatus = document.querySelector('#crmLoginStatus');
+const draftStatus = document.querySelector('#draftStatus');
+const clearDraftButton = document.querySelector('#clearDraftButton');
+const crmSidebar = document.querySelector('#crmSidebar');
+const crmTopbar = document.querySelector('#crmTopbar');
+const crmBranchLabel = document.querySelector('#crmBranchLabel');
+const settingsModal = document.querySelector('#settingsModal');
+const openSettingsButton = document.querySelector('#openSettingsButton');
+const topSettingsButton = document.querySelector('#topSettingsButton');
+const closeSettingsButton = document.querySelector('#closeSettingsButton');
+const sidebarToggle = document.querySelector('#sidebarToggle');
+const processSteps = [...document.querySelectorAll('.process-steps span')];
+
+form.noValidate = true;
+
+const defaultUiSettings = {
+  theme: 'blue',
+  density: 'comfortable',
+  confirmBeforeSubmit: true,
+  focusProductSearch: true,
+  stickySummary: true
+};
+let uiSettings = loadUiSettings();
 
 const fields = {
   productSearch: document.querySelector('#productSearch'),
@@ -98,15 +123,81 @@ let selectedBranch = '';
 let productsLoading = false;
 let productsReady = false;
 let lastCreatedOrder = null;
+let currentCrmUser = null;
+let appInitialized = false;
+let draftSaveTimer = 0;
+let draftRestored = false;
 
 const branches = {
   ayu: 'Аю-Гранд',
   besh: 'Беш-Сары'
 };
 
-init();
+boot();
 
-async function init() {
+applyUiSettings();
+bindCrmShell();
+
+async function boot() {
+  bindLogin();
+  const session = await fetch('/api/crm/session').then((response) => response.json()).catch(() => ({ user: null }));
+  if (!session.user) {
+    crmLoginScreen.classList.remove('hidden');
+    appPreloader.classList.add('hidden');
+    return;
+  }
+  await enterCrm(session.user);
+}
+
+async function enterCrm(user) {
+  currentCrmUser = user;
+  document.body.dataset.role = user.role;
+  applyRoleAccess(user);
+  crmLoginScreen.classList.add('hidden');
+  const requestedPage = getRequestedPage();
+  if (!['admin', 'owner', 'employee'].includes(user.role)) {
+    window.location.href = requestedPage || (user.role === 'accountant' ? '/prices.html' : '/report.html');
+    return;
+  }
+  if (requestedPage && requestedPage !== '/' && requestedPage !== '/sales.html') {
+    window.location.href = requestedPage;
+    return;
+  }
+  if (!appInitialized) {
+    appInitialized = true;
+    await initializeSalesApp();
+  }
+}
+
+function getRequestedPage() {
+  const value = new URLSearchParams(window.location.search).get('next') || '';
+  return value.startsWith('/') && !value.startsWith('//') ? value : '';
+}
+
+function bindLogin() {
+  crmLoginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    crmLoginStatus.textContent = 'Проверяю доступ...';
+    try {
+      const response = await fetch('/api/crm/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login: document.querySelector('#crmLogin').value.trim(),
+          password: document.querySelector('#crmPassword').value
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Не удалось войти.');
+      crmLoginStatus.textContent = '';
+      await enterCrm(data.user);
+    } catch (error) {
+      crmLoginStatus.textContent = error.message;
+    }
+  });
+}
+
+async function initializeSalesApp() {
   try {
     setAppPreloader(true, 'Загружаю настройки...');
     const response = await fetch('/api/config');
@@ -120,6 +211,7 @@ async function init() {
     productsReady = true;
     renderCustomerMode();
     initBranchSelection();
+    restoreDraft();
     await updateCalculation();
   } catch (error) {
     setStatus('Не удалось загрузить настройки расчета.', 'error');
@@ -148,6 +240,7 @@ function setAppPreloader(visible, message = 'Загружаю товары...') 
 
 form.addEventListener('input', () => {
   updateCalculation();
+  scheduleDraftSave();
 });
 
 form.addEventListener('change', (event) => {
@@ -155,16 +248,20 @@ form.addEventListener('change', (event) => {
     renderCustomerMode();
     scheduleDuplicateCustomerCheck();
   }
+  scheduleDraftSave();
 });
 
 paymentTypeSelect.addEventListener('change', () => {
   updateCalculation();
+  renderProductResults();
+  scheduleDraftSave();
 });
 
 for (const radio of document.querySelectorAll('input[name="paymentScenario"]')) {
   radio.addEventListener('change', () => {
     applyPaymentScenario();
     updateCalculation();
+    renderProductResults();
   });
 }
 
@@ -290,14 +387,34 @@ closeSuccessModalButton.addEventListener('click', () => {
   successModal.classList.add('hidden');
 });
 
+submitButton.addEventListener('click', (event) => {
+  event.preventDefault();
+  if (!submitButton.disabled) {
+    form.requestSubmit();
+  }
+});
+
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (submitInProgress) {
     return;
   }
 
+  try {
+    validateBeforeSubmit();
+  } catch (error) {
+    setStatus(error.message, 'error');
+    return;
+  }
+
+  if (uiSettings.confirmBeforeSubmit) {
+    const total = lastCalculation?.finalTotal || lastCalculation?.baseTotal || 0;
+    const confirmed = window.confirm(`Создать документ в МойСклад на сумму ${formatSom(total)}?`);
+    if (!confirmed) return;
+  }
+
   submitInProgress = true;
-  submitButton.disabled = true;
+  updateSubmitButtonState();
   setStatus('Создаю документ в МойСклад...', '');
 
   try {
@@ -323,6 +440,7 @@ form.addEventListener('submit', async (event) => {
     const paymentText = data.document?.payment?.name ? ` Входящий платеж №${data.document.payment.name} создан.` : '';
     const loyaltyText = getLoyaltyResultText(data.loyalty);
     lastCreatedOrder = { ...data, requestPayload: payload };
+    clearDraft();
     showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${loyaltyText}`);
     setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${loyaltyText}`, 'success');
     await loadLoyaltyCustomer();
@@ -330,7 +448,7 @@ form.addEventListener('submit', async (event) => {
     setStatus(error.message, 'error');
   } finally {
     submitInProgress = false;
-    submitButton.disabled = false;
+    updateSubmitButtonState();
   }
 });
 
@@ -555,11 +673,19 @@ function addProductToOrder(product) {
     assortmentHref: product?.href || '',
     assortmentType: product?.type || 'product',
     productPrice: product?.price || 0,
+    priceManual: false,
     productCost: product?.cost || 0,
     quantity: 1
   });
   renderOrderItems();
   updateCalculation();
+  updateCrmProgress();
+  scheduleDraftSave();
+  if (uiSettings.focusProductSearch) {
+    fields.productSearch.value = '';
+    fields.productResults.innerHTML = '';
+    window.setTimeout(() => fields.productSearch.focus(), 0);
+  }
 }
 
 function renderOrderItems() {
@@ -584,7 +710,9 @@ function renderOrderItems() {
     priceInput.value = item.productPrice || '';
     priceInput.addEventListener('input', () => {
       item.productPrice = parseMoney(priceInput.value);
+      item.priceManual = true;
       updateCalculation();
+      scheduleDraftSave();
     });
     priceLabel.append(priceTitle, priceInput);
 
@@ -599,6 +727,7 @@ function renderOrderItems() {
     quantityInput.addEventListener('input', () => {
       item.quantity = Number(quantityInput.value || 1);
       updateCalculation();
+      scheduleDraftSave();
     });
     quantityLabel.append(quantityTitle, quantityInput);
 
@@ -610,6 +739,7 @@ function renderOrderItems() {
       orderItems.splice(index, 1);
       renderOrderItems();
       updateCalculation();
+      scheduleDraftSave();
     });
 
     row.append(productInfo, priceLabel, quantityLabel, remove);
@@ -749,6 +879,12 @@ function selectBranch(branchKey) {
   applyBranchStore();
   branchScreen.classList.add('hidden');
   app.classList.remove('hidden');
+  crmSidebar.classList.remove('hidden');
+  crmTopbar.classList.remove('hidden');
+  document.body.classList.add('crm-active');
+  crmBranchLabel.textContent = branches[branchKey] || 'Филиал не выбран';
+  updateCrmProgress();
+  scheduleDraftSave();
 }
 
 function applyBranchStore() {
@@ -937,7 +1073,11 @@ function renderDuplicateCustomerWarning() {
   customerDuplicateWarning.textContent = show
     ? `Такой клиент уже есть: ${duplicateCustomer.name}${duplicateCustomer.phone ? `, ${duplicateCustomer.phone}` : ''}. Переключитесь на "Старый клиент" и выберите его из списка.`
     : '';
-  submitButton.disabled = Boolean(show) || submitInProgress;
+  updateSubmitButtonState();
+}
+
+function updateSubmitButtonState() {
+  submitButton.disabled = submitInProgress;
 }
 
 function scheduleLoyaltyCustomerLoad() {
@@ -1111,8 +1251,45 @@ function validateLoyaltyBeforeSubmit() {
   }
 }
 
+function validateBeforeSubmit() {
+  if (!selectedBranch) {
+    throw new Error('Сначала выберите филиал.');
+  }
+  if (!orderItems.length) {
+    throw new Error('Добавьте хотя бы один товар.');
+  }
+  if (!getSelectedStore()) {
+    throw new Error('Выберите точку продаж.');
+  }
+  if (!getSelectedEmployee()) {
+    throw new Error('Выберите сотрудника.');
+  }
+  if (!getSelectedPaymentType()) {
+    throw new Error('Выберите тип оплаты.');
+  }
+
+  const mode = getCustomerMode();
+  if (mode === 'new') {
+    if (!fields.customerName.value.trim()) {
+      fields.customerName.focus();
+      throw new Error('Введите ФИО нового клиента.');
+    }
+    if (!normalizePhone(fields.customerPhone.value)) {
+      fields.customerPhone.focus();
+      throw new Error('Введите телефон нового клиента.');
+    }
+    if (duplicateCustomer) {
+      throw new Error(`Такой клиент уже есть: ${duplicateCustomer.name}. Выберите режим "Старый клиент".`);
+    }
+  }
+  if (mode === 'existing' && !getSelectedCustomer()) {
+    throw new Error('Выберите старого клиента из списка или добавьте нового.');
+  }
+}
+
 async function updateCalculation() {
   clearStatus();
+  updateCrmProgress();
   if (!orderItems.length) {
     lastCalculation = null;
     renderEmptyCalculation();
@@ -1133,11 +1310,185 @@ async function updateCalculation() {
     lastCalculation = data;
     renderCalculation(data);
     renderLoyaltyPanel();
+    updateCrmProgress();
   } catch (error) {
     lastCalculation = null;
     setStatus(error.message, 'error');
     renderLoyaltyPanel();
   }
+}
+
+function bindCrmShell() {
+  const openSettings = () => {
+    syncSettingsControls();
+    settingsModal.classList.remove('hidden');
+  };
+  openSettingsButton?.addEventListener('click', openSettings);
+  topSettingsButton?.addEventListener('click', openSettings);
+  closeSettingsButton?.addEventListener('click', () => settingsModal.classList.add('hidden'));
+  settingsModal?.addEventListener('click', (event) => {
+    if (event.target === settingsModal) settingsModal.classList.add('hidden');
+  });
+  sidebarToggle?.addEventListener('click', () => document.body.classList.toggle('sidebar-open'));
+
+  document.querySelectorAll('[data-theme]').forEach((button) => {
+    button.addEventListener('click', () => {
+      uiSettings.theme = button.dataset.theme;
+      applyUiSettings();
+      syncSettingsControls();
+    });
+  });
+  document.querySelectorAll('[data-density]').forEach((button) => {
+    button.addEventListener('click', () => {
+      uiSettings.density = button.dataset.density;
+      applyUiSettings();
+      syncSettingsControls();
+    });
+  });
+  document.querySelector('#saveSettingsButton')?.addEventListener('click', () => {
+    uiSettings.confirmBeforeSubmit = document.querySelector('#confirmBeforeSubmit').checked;
+    uiSettings.focusProductSearch = document.querySelector('#focusProductSearch').checked;
+    uiSettings.stickySummary = document.querySelector('#stickySummary').checked;
+    localStorage.setItem('mysrsUiSettings', JSON.stringify(uiSettings));
+    applyUiSettings();
+    settingsModal.classList.add('hidden');
+  });
+  document.querySelector('#resetSettingsButton')?.addEventListener('click', () => {
+    uiSettings = { ...defaultUiSettings };
+    localStorage.removeItem('mysrsUiSettings');
+    applyUiSettings();
+    syncSettingsControls();
+  });
+  document.querySelector('#crmLogoutButton')?.addEventListener('click', async () => {
+    await fetch('/api/crm/logout', { method: 'POST' }).catch(() => {});
+    window.location.reload();
+  });
+  clearDraftButton?.addEventListener('click', () => {
+    if (!window.confirm('Удалить сохраненный черновик продажи?')) return;
+    clearDraft();
+    window.location.reload();
+  });
+}
+
+function applyRoleAccess(user) {
+  const roleNames = { admin: 'Администратор', owner: 'Владелец', accountant: 'Бухгалтер', employee: 'Сотрудник' };
+  const initials = String(user.name || user.login || 'OR').split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+  document.querySelector('#sidebarUserName').textContent = user.name;
+  document.querySelector('#sidebarUserRole').textContent = roleNames[user.role] || user.role;
+  document.querySelector('#topUserName').textContent = user.name;
+  document.querySelector('#profileInitials').textContent = initials;
+  document.querySelectorAll('[data-roles]').forEach((element) => {
+    const roles = String(element.dataset.roles || '').split(/\s+/);
+    element.classList.toggle('hidden', !roles.includes(user.role));
+  });
+}
+
+function getDraftKey() {
+  return `mysrsSaleDraft:${currentCrmUser?.login || 'anonymous'}`;
+}
+
+function scheduleDraftSave() {
+  if (!currentCrmUser || !appInitialized || !selectedBranch) return;
+  window.clearTimeout(draftSaveTimer);
+  draftStatus.textContent = 'Сохраняю черновик...';
+  draftSaveTimer = window.setTimeout(saveDraft, 450);
+}
+
+function saveDraft() {
+  if (!currentCrmUser || !selectedBranch) return;
+  const values = {};
+  for (const element of form.elements) {
+    if (!element.name || element.name === 'productSearch') continue;
+    if (element.type === 'radio') {
+      if (element.checked) values[element.name] = element.value;
+    } else if (element.type !== 'submit' && element.type !== 'button') {
+      values[element.name] = element.value;
+    }
+  }
+  const draft = {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    branch: selectedBranch,
+    values,
+    items: orderItems
+  };
+  localStorage.setItem(getDraftKey(), JSON.stringify(draft));
+  draftStatus.textContent = `Черновик сохранен ${new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(new Date())}`;
+}
+
+function restoreDraft() {
+  draftRestored = true;
+  let draft;
+  try {
+    draft = JSON.parse(localStorage.getItem(getDraftKey()) || 'null');
+  } catch {
+    draft = null;
+  }
+  if (!draft?.items && !draft?.values) {
+    draftStatus.textContent = 'Черновик не сохранен';
+    return;
+  }
+
+  if (!selectedBranch && branches[draft.branch]) selectBranch(draft.branch);
+  orderItems = Array.isArray(draft.items) ? draft.items : [];
+  for (const [name, value] of Object.entries(draft.values || {})) {
+    const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
+    for (const control of controls) {
+      if (control.type === 'radio') control.checked = control.value === value;
+      else control.value = value;
+    }
+  }
+  renderOrderItems();
+  applyPaymentScenario();
+  renderCustomerMode();
+  draftStatus.textContent = `Черновик восстановлен`;
+  setStatus('Восстановлен незавершенный черновик продажи.', 'success');
+}
+
+function clearDraft() {
+  if (currentCrmUser) localStorage.removeItem(getDraftKey());
+  window.clearTimeout(draftSaveTimer);
+  draftStatus.textContent = 'Черновик не сохранен';
+}
+
+function loadUiSettings() {
+  try {
+    return { ...defaultUiSettings, ...JSON.parse(localStorage.getItem('mysrsUiSettings') || '{}') };
+  } catch {
+    return { ...defaultUiSettings };
+  }
+}
+
+function applyUiSettings() {
+  document.body.dataset.theme = uiSettings.theme;
+  document.body.classList.toggle('density-compact', uiSettings.density === 'compact');
+  document.body.classList.toggle('sticky-summary', Boolean(uiSettings.stickySummary));
+}
+
+function syncSettingsControls() {
+  document.querySelectorAll('[data-theme]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.theme === uiSettings.theme);
+  });
+  document.querySelectorAll('[data-density]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.density === uiSettings.density);
+  });
+  document.querySelector('#confirmBeforeSubmit').checked = Boolean(uiSettings.confirmBeforeSubmit);
+  document.querySelector('#focusProductSearch').checked = Boolean(uiSettings.focusProductSearch);
+  document.querySelector('#stickySummary').checked = Boolean(uiSettings.stickySummary);
+}
+
+function updateCrmProgress() {
+  if (!processSteps.length) return;
+  const hasItems = orderItems.length > 0;
+  const hasPayment = hasItems && Boolean(paymentTypeSelect.value || getPaymentScenario() === 'cash');
+  const customerMode = getCustomerMode();
+  const hasCustomer = customerMode === 'retail' || Boolean(fields.customerName.value.trim());
+  const completed = [hasItems, hasPayment, hasCustomer, false];
+  const activeIndex = !hasItems ? 0 : !hasPayment ? 1 : !hasCustomer ? 2 : 3;
+  processSteps.forEach((step, index) => {
+    step.classList.toggle('active', index === activeIndex);
+    step.classList.toggle('complete', completed[index]);
+  });
 }
 
 function renderEmptyCalculation() {
@@ -1212,6 +1563,7 @@ function getPayload() {
     paymentTypeName: selectedPaymentType?.name || '',
     paymentTypeHref: selectedPaymentType?.href || '',
     paymentTypeRate: selectedPaymentType?.rate ?? 0,
+    paymentTypeComment: selectedPaymentType?.comment || '',
     employeeName: selectedEmployee?.name || '',
     employeeHref: selectedEmployee?.href || '',
     retailStoreName: getSelectedStore()?.name || '',
@@ -1283,7 +1635,7 @@ function getPrepaymentMethods() {
 
 function isCashPaymentType(paymentType) {
   const name = String(paymentType?.name || '').toLowerCase();
-  return name.includes('налич') || name.includes('cash') || name.includes('qr') || name.includes('карта');
+  return name.includes('налич') || name.includes('cash') || name.includes('карта');
 }
 
 function isQrPaymentType(paymentType) {
@@ -1305,7 +1657,7 @@ function isCashOnlyPaymentType(paymentType) {
 }
 
 function isBankPaymentType(paymentType) {
-  return !isCashPaymentType(paymentType) && !isDebtPaymentType(paymentType);
+  return !isCashPaymentType(paymentType) && !isDebtPaymentType(paymentType) && !isQrPaymentType(paymentType);
 }
 
 function getSelectedEmployee() {

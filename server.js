@@ -1,12 +1,14 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = join(__dirname, 'public');
+const dataDir = join(__dirname, 'data');
+const auditLogPath = join(dataDir, 'audit-log.jsonl');
 
 loadDotEnv();
 loadDotEnv(join(__dirname, 'loyalty-lab/.env'));
@@ -57,12 +59,46 @@ const contentTypes = {
 
 const recentOrders = new Map();
 const reportCookieName = 'mysrs_report_session';
+const crmCookieName = 'mysrs_crm_session';
+const PRICE_FORMULA_TEMPLATE_START = '[ORDO_PRICE_TEMPLATE]';
+const PRICE_FORMULA_TEMPLATE_END = '[/ORDO_PRICE_TEMPLATE]';
 
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
+    if (req.method === 'GET' && url.pathname === '/api/crm/session') {
+      sendJson(res, 200, { user: getCrmUser(req) });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/crm/login') {
+      const body = await readJson(req);
+      const user = authenticateCrmUser(body.login, body.password);
+      if (!user) throw httpError(401, 'Неверный логин или пароль.');
+      setCrmSession(res, user);
+      await writeAudit({ user, action: 'login', entity: 'session', description: 'Вход в CRM' });
+      sendJson(res, 200, { user });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/crm/logout') {
+      const user = getCrmUser(req);
+      clearCrmSession(res);
+      if (user) await writeAudit({ user, action: 'logout', entity: 'session', description: 'Выход из CRM' });
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/audit') {
+      requireCrmRole(req, ['admin', 'owner']);
+      const rows = await readAuditLog(Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200)));
+      sendJson(res, 200, { rows });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/config') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       sendJson(res, 200, {
         documentType: process.env.MOYSKLAD_DOCUMENT_TYPE || 'auto',
         loyalty: getLoyaltyConfig()
@@ -71,30 +107,35 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/payment-types') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const paymentTypes = await getMoySkladPaymentTypes();
       sendJson(res, 200, { paymentTypes });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/employees') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const employees = await getMoySkladEmployees();
       sendJson(res, 200, { employees });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/stores') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const stores = await getMoySkladStores();
       sendJson(res, 200, { stores });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/retail-stores') {
+      requireAnyAuthenticatedUser(req);
       const retailStores = await getMoySkladRetailStores();
       sendJson(res, 200, { retailStores });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/retail-shifts') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const retailStoreHref = url.searchParams.get('retailStoreHref') || '';
       if (!retailStoreHref) {
         throw httpError(400, 'Укажите retailStoreHref.');
@@ -105,6 +146,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/products') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const search = url.searchParams.get('search') || '';
       const products = await getMoySkladProducts(search);
       sendJson(res, 200, { products });
@@ -112,6 +154,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/customers') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const search = url.searchParams.get('search') || '';
       const customers = await getMoySkladCustomers(search);
       sendJson(res, 200, { customers });
@@ -119,6 +162,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/loyalty/customer') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const phone = url.searchParams.get('phone') || '';
       const customer = await getLoyaltyCustomer(phone);
       sendJson(res, 200, { customer, loyalty: getLoyaltyConfig() });
@@ -126,7 +170,8 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/report/session') {
-      sendJson(res, 200, { authenticated: isReportAuthenticated(req) });
+      const user = getCrmUser(req);
+      sendJson(res, 200, { authenticated: isReportAuthenticated(req), user });
       return;
     }
 
@@ -156,19 +201,76 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/reports/returns') {
       requireReportAuth(req);
+      const user = getEffectiveUser(req, 'owner');
       const body = await readJson(req);
       const result = await createReportReturn(body);
+      await writeAudit({ user, action: 'return', entity: body.documentType || 'document', entityId: body.documentId, description: `Возврат товара, количество: ${body.quantity || 1}` });
       sendJson(res, 201, result);
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/accounting/prices') {
+      requireAccountingAuth(req);
+      const catalog = await getAccountingPriceCatalog({
+        offset: url.searchParams.get('offset'),
+        limit: url.searchParams.get('limit'),
+        includePriceTypes: url.searchParams.get('includePriceTypes') !== 'false'
+      });
+      sendJson(res, 200, catalog);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/accounting/supply-products') {
+      requireAccountingAuth(req);
+      const result = await getAccountingSupplyProducts(url.searchParams.get('query') || '');
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/accounting/price-formula/folder-template') {
+      const user = requireAccountingAuth(req);
+      const body = await readJson(req);
+      const result = await updateAccountingFolderPriceTemplate(body);
+      await writeAudit({
+        user,
+        action: 'prices.template.folder',
+        entity: 'productfolder',
+        entityId: result.id,
+        description: result.template ? `Шаблон цен сохранен для группы «${result.name}»` : `Шаблон цен удален у группы «${result.name}»`
+      });
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/accounting/prices/update') {
+      requireAccountingAuth(req);
+      const user = getEffectiveUser(req, 'accountant');
+      const body = await readJson(req);
+      const result = await updateAccountingPrices(body);
+      await writeAudit({ user, action: 'prices.update', entity: 'product', description: `Массовое изменение цен: успешно ${result.updated}, ошибок ${result.failed}`, details: { updated: result.updated, failed: result.failed } });
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/accounting/prices/formula-update') {
+      requireAccountingAuth(req);
+      const user = getEffectiveUser(req, 'accountant');
+      const body = await readJson(req);
+      const result = await updateAccountingFormulaPrices(body);
+      await writeAudit({ user, action: 'prices.formula.update', entity: 'product', description: `Расчет цен: успешно ${result.updated}, ошибок ${result.failed}`, details: { updated: result.updated, failed: result.failed } });
+      sendJson(res, 200, result);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/calculate') {
+      requireCrmRole(req, ['admin', 'owner', 'employee']);
       const body = await readJson(req);
       sendJson(res, 200, calculate(body));
       return;
     }
 
     if (req.method === 'POST' && url.pathname === '/api/orders') {
+      const user = requireCrmRole(req, ['admin', 'owner', 'employee']);
       const body = await readJson(req);
       const requestKey = String(body.requestKey || '');
       if (requestKey && recentOrders.has(requestKey)) {
@@ -181,6 +283,14 @@ const server = createServer(async (req, res) => {
       const document = await createMoySkladDocument(result, body);
       const loyalty = await applyLoyaltySafely(result, body, document);
       const payload = { calculation: result, document, loyalty };
+      await writeAudit({
+        user,
+        action: 'sale.create',
+        entity: document.type || 'document',
+        entityId: document.id || '',
+        description: `${document.type === 'retaildemand' ? 'Продажа' : 'Отгрузка'} ${document.name || ''} на ${formatMoney(result.finalTotal)} сом`,
+        details: { documentName: document.name, amount: result.finalTotal, branch: body.branchName || '', customer: body.customerName || '' }
+      });
       if (requestKey) {
         recentOrders.set(requestKey, payload);
         setTimeout(() => recentOrders.delete(requestKey), 10 * 60 * 1000);
@@ -234,7 +344,12 @@ function calculate(input) {
     throw httpError(400, 'Для розничного покупателя нельзя списывать бонусы. Выберите старого или нового клиента.');
   }
 
-  const rate = getPaymentRate(paymentType.provider, months, input.paymentTypeRate);
+  const rateFromInput = Number(input.paymentTypeRate);
+  const rateFromPaymentComment = parseRateFromComment(input.paymentTypeComment);
+  const explicitRate = Number.isFinite(rateFromInput) && rateFromInput > 0
+    ? rateFromInput
+    : rateFromPaymentComment;
+  const rate = getPaymentRate(paymentType.provider, months, explicitRate);
 
   const baseTotal = roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
   if (loyaltyRedemption > baseTotal) {
@@ -433,20 +548,7 @@ async function createMoySkladDocument(calculation, input) {
     payload.attributes = attributes;
   }
 
-  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json;charset=utf-8',
-      'Content-Type': 'application/json;charset=utf-8'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw httpError(response.status, 'МойСклад вернул ошибку при создании документа.', data);
-  }
+  const data = await postMoySkladDocumentWithAttributeRetry(token, documentType, payload);
 
   const document = {
     id: data.id,
@@ -468,6 +570,66 @@ async function createMoySkladDocument(calculation, input) {
   }
 
   return document;
+}
+
+async function postMoySkladDocumentWithAttributeRetry(token, documentType, payload) {
+  const safePayload = structuredClone(payload);
+  const skippedAttributeIds = [];
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8',
+        'Content-Type': 'application/json;charset=utf-8'
+      },
+      body: JSON.stringify(safePayload)
+    });
+
+    const data = await response.json().catch(() => null);
+    if (response.ok) {
+      if (skippedAttributeIds.length) {
+        data._skippedAttributeIds = skippedAttributeIds;
+      }
+      return data;
+    }
+
+    const badAttributeId = getMissingAttributeId(data);
+    if (!badAttributeId || !Array.isArray(safePayload.attributes)) {
+      throw httpError(response.status, 'МойСклад вернул ошибку при создании документа.', data);
+    }
+
+    const before = safePayload.attributes.length;
+    safePayload.attributes = safePayload.attributes.filter((attribute) =>
+      getIdFromHref(attribute?.meta?.href) !== badAttributeId
+    );
+    if (safePayload.attributes.length === before) {
+      throw httpError(response.status, 'МойСклад вернул ошибку при создании документа.', data);
+    }
+    if (!safePayload.attributes.length) {
+      delete safePayload.attributes;
+    }
+    skippedAttributeIds.push(badAttributeId);
+    console.warn(`MoySklad attribute ${badAttributeId} not found. Retrying ${documentType} without this attribute.`);
+  }
+
+  throw httpError(500, 'Не удалось создать документ: слишком много некорректных доп.полей.');
+}
+
+function getMissingAttributeId(data) {
+  const errors = Array.isArray(data?.errors) ? data.errors : [];
+  for (const error of errors) {
+    const message = String(error?.error || '');
+    if (error?.code !== 1021 || !message.includes('AttributeMetadata')) {
+      continue;
+    }
+    const match = message.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    if (match) {
+      return match[0];
+    }
+  }
+  return '';
 }
 
 function resolveDocumentType(calculation) {
@@ -916,6 +1078,581 @@ async function getMoySkladProducts(search) {
   }));
 }
 
+async function getAccountingPriceCatalog(options = {}) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const offset = Math.max(0, Number.parseInt(options.offset, 10) || 0);
+  const limit = Math.min(500, Math.max(1, Number.parseInt(options.limit, 10) || 500));
+  const [productPage, priceTypes, folders] = await Promise.all([
+    loadMoySkladProductPage(token, offset, limit),
+    options.includePriceTypes ? getMoySkladPriceTypes(token) : Promise.resolve([]),
+    options.includePriceTypes ? getMoySkladProductFolders(token).catch(() => []) : Promise.resolve([])
+  ]);
+
+  return {
+    priceTypes,
+    folders,
+    offset,
+    limit,
+    total: productPage.total,
+    nextOffset: offset + productPage.products.length,
+    hasMore: offset + productPage.products.length < productPage.total,
+    products: productPage.products.map((product) => ({
+      id: product.id,
+      name: product.name || '',
+      code: product.code || '',
+      article: product.article || '',
+      href: product.meta?.href || '',
+      type: product.meta?.type || 'product',
+      archived: Boolean(product.archived),
+      folder: getAccountingProductFolder(product),
+      buyPrice: getAccountingBuyPrice(product),
+      minPrice: getAccountingMinPrice(product),
+      prices: (product.salePrices || []).map((price) => ({
+        value: roundMoney(Number(price.value || 0) / 100),
+        priceTypeHref: price.priceType?.meta?.href || '',
+        priceTypeName: price.priceType?.name || '',
+        currencyHref: price.currency?.meta?.href || ''
+      }))
+    }))
+  };
+}
+
+async function getAccountingSupplyProducts(query) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const normalizedQuery = String(query || '').trim();
+  if (!normalizedQuery) throw httpError(400, 'Введите номер или ссылку приемки.');
+
+  const supplyId = getMoySkladEntityIdFromInput(normalizedQuery);
+  const supply = supplyId
+    ? await loadMoySkladSupply(token, supplyId)
+    : await findMoySkladSupply(token, normalizedQuery);
+  if (!supply?.id) throw httpError(404, 'Приемка не найдена.');
+
+  const positions = await loadMoySkladSupplyPositions(token, supply.id);
+  return {
+    id: supply.id,
+    name: supply.name || '',
+    moment: supply.moment || '',
+    products: positions.map((position) => {
+      const assortment = position.assortment || {};
+      return {
+        id: assortment.id || getIdFromHref(assortment.meta?.href || ''),
+        href: assortment.meta?.href || '',
+        type: assortment.meta?.type || '',
+        name: assortment.name || position.name || '',
+        code: assortment.code || '',
+        article: assortment.article || '',
+        quantity: Number(position.quantity || 0)
+      };
+    }).filter((product) => product.href && product.type === 'product')
+  };
+}
+
+async function findMoySkladSupply(token, query) {
+  const params = new URLSearchParams({
+    limit: '10',
+    search: query,
+    order: 'moment,desc'
+  });
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/supply?${params}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось найти приемку в МойСклад.', data);
+  }
+
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  const exact = rows.find((item) => String(item.name || '').trim() === query);
+  const selected = exact || rows[0];
+  if (!selected?.id) throw httpError(404, `Приемка «${query}» не найдена.`);
+  return loadMoySkladSupply(token, selected.id);
+}
+
+async function loadMoySkladSupply(token, supplyId) {
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/supply/${supplyId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось загрузить приемку из МойСклад.', data);
+  }
+  return data;
+}
+
+async function loadMoySkladSupplyPositions(token, supplyId) {
+  const positions = [];
+  let offset = 0;
+  const limit = 1000;
+
+  while (offset < 10000) {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      expand: 'assortment'
+    });
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/supply/${supplyId}/positions?${params}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, 'Не удалось загрузить товары из приемки.', data);
+    }
+
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    positions.push(...rows);
+    if (rows.length < limit) break;
+    offset += limit;
+  }
+
+  return positions;
+}
+
+function getMoySkladEntityIdFromInput(value) {
+  return String(value || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] || '';
+}
+
+function getAccountingBuyPrice(product) {
+  const buyPrice = product.buyPrice || {};
+  const value = Number(buyPrice.value || 0);
+  return {
+    value: Number.isFinite(value) ? roundMoney(value / 100) : 0,
+    currencyName: buyPrice.currency?.name || '',
+    currencyIsoCode: buyPrice.currency?.isoCode || '',
+    currencyHref: buyPrice.currency?.meta?.href || ''
+  };
+}
+
+function getAccountingMinPrice(product) {
+  const minPrice = product.minPrice || {};
+  const value = Number(minPrice.value || 0);
+  return {
+    value: Number.isFinite(value) ? roundMoney(value / 100) : 0,
+    currencyName: minPrice.currency?.name || '',
+    currencyIsoCode: minPrice.currency?.isoCode || '',
+    currencyHref: minPrice.currency?.meta?.href || ''
+  };
+}
+
+function getAccountingProductFolder(product) {
+  const folder = product.productFolder || {};
+  return {
+    href: folder.meta?.href || '',
+    id: folder.id || getIdFromHref(folder.meta?.href || ''),
+    name: folder.name || '',
+    pathName: folder.pathName || ''
+  };
+}
+
+async function loadMoySkladProductPage(token, offset, limit) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    order: 'name,asc',
+    expand: 'productFolder'
+  });
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/product?${params}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось загрузить каталог цен из МойСклад.', data);
+  }
+
+  const products = data?.rows || [];
+  const total = Number(data?.meta?.size);
+  return {
+    products,
+    total: Number.isFinite(total) ? total : offset + products.length
+  };
+}
+
+async function getMoySkladProductFolders(token) {
+  const folders = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (offset < 5000) {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      order: 'pathName,asc'
+    });
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/productfolder?${params}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, 'Не удалось загрузить группы товаров из МойСклад.', data);
+    }
+
+    const rows = data?.rows || [];
+    folders.push(...rows.map((folder) => ({
+      id: folder.id || getIdFromHref(folder.meta?.href || ''),
+      name: folder.name || '',
+      pathName: folder.pathName || '',
+      href: folder.meta?.href || '',
+      template: parsePriceFormulaTemplate(folder.description || '')
+    })).filter((folder) => folder.href));
+    if (rows.length < limit) break;
+    offset += limit;
+  }
+
+  return folders.sort((left, right) =>
+    getFolderDisplayName(left).localeCompare(getFolderDisplayName(right), 'ru')
+  );
+}
+
+function getFolderDisplayName(folder) {
+  return [folder.pathName, folder.name].filter(Boolean).join(' / ');
+}
+
+async function updateAccountingFolderPriceTemplate(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const folderHref = String(input.folderHref || '').trim();
+  const templateInput = input.template || null;
+  const folderId = getMoySkladEntityIdFromInput(folderHref);
+  if (!folderId) throw httpError(400, 'Выберите корректную группу или подгруппу.');
+
+  const folder = await loadMoySkladProductFolder(token, folderId);
+  const template = templateInput ? normalizePriceFormulaTemplate(templateInput, folder) : null;
+  const description = setPriceFormulaTemplateInDescription(folder.description || '', template);
+
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/productfolder/${folderId}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ description })
+  });
+  const updated = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось сохранить шаблон в описании группы.', updated);
+  }
+
+  return {
+    id: folderId,
+    href: updated?.meta?.href || folderHref,
+    name: updated?.name || folder.name || '',
+    pathName: updated?.pathName || folder.pathName || '',
+    template: parsePriceFormulaTemplate(updated?.description || description)
+  };
+}
+
+async function loadMoySkladProductFolder(token, folderId) {
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/productfolder/${folderId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось загрузить группу товаров из МойСклад.', data);
+  }
+  return data;
+}
+
+function normalizePriceFormulaTemplate(template, folder = {}) {
+  const id = String(template.id || folder.meta?.href || folder.id || randomUUID());
+  const name = String(template.name || folder.name || 'Шаблон группы').trim();
+  const tiers = Array.isArray(template.tiers) ? template.tiers : [];
+  return {
+    id,
+    name,
+    usdRate: toFiniteNumber(template.usdRate, 89),
+    markup: toFiniteNumber(template.markup, 20),
+    markupMode: ['percent', 'money', 'tiers'].includes(template.markupMode) ? template.markupMode : 'percent',
+    tiers: tiers.map((tier) => ({
+      from: tier.from ?? '',
+      to: tier.to ?? '',
+      amount: tier.amount ?? ''
+    })),
+    fallbackMarkupMode: ['percent', 'money'].includes(template.fallbackMarkupMode) ? template.fallbackMarkupMode : 'percent',
+    fallbackMarkup: toFiniteNumber(template.fallbackMarkup, toFiniteNumber(template.markup, 20)),
+    bank36: toFiniteNumber(template.bank36, 10),
+    bank912: toFiniteNumber(template.bank912, 20),
+    rounding: toFiniteNumber(template.rounding, 10)
+  };
+}
+
+function toFiniteNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function parsePriceFormulaTemplate(description) {
+  const text = String(description || '');
+  const startIndex = text.indexOf(PRICE_FORMULA_TEMPLATE_START);
+  const endIndex = text.indexOf(PRICE_FORMULA_TEMPLATE_END);
+  if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex) return null;
+
+  const encoded = text.slice(startIndex + PRICE_FORMULA_TEMPLATE_START.length, endIndex).trim();
+  try {
+    const json = Buffer.from(encoded, 'base64url').toString('utf8');
+    const parsed = JSON.parse(json);
+    return normalizePriceFormulaTemplate(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function setPriceFormulaTemplateInDescription(description, template) {
+  const clean = removePriceFormulaTemplateFromDescription(description);
+  if (!template) return clean;
+  const encoded = Buffer.from(JSON.stringify(template), 'utf8').toString('base64url');
+  const block = `${PRICE_FORMULA_TEMPLATE_START}\n${encoded}\n${PRICE_FORMULA_TEMPLATE_END}`;
+  return [clean, block].filter(Boolean).join('\n\n');
+}
+
+function removePriceFormulaTemplateFromDescription(description) {
+  const text = String(description || '');
+  const startIndex = text.indexOf(PRICE_FORMULA_TEMPLATE_START);
+  const endIndex = text.indexOf(PRICE_FORMULA_TEMPLATE_END);
+  if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex) return text.trim();
+  return `${text.slice(0, startIndex)}${text.slice(endIndex + PRICE_FORMULA_TEMPLATE_END.length)}`.trim();
+}
+
+async function getMoySkladPriceTypes(token) {
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/context/companysettings/pricetype`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось загрузить типы цен из МойСклад.', data);
+  }
+
+  return (data || []).map((priceType) => ({
+    id: priceType.id,
+    name: priceType.name,
+    href: priceType.meta?.href || ''
+  })).filter((priceType) => priceType.href);
+}
+
+async function updateAccountingPrices(input) {
+  const changes = Array.isArray(input.changes) ? input.changes : [];
+  const priceTypeHref = String(input.priceTypeHref || '').trim();
+  if (!changes.length) throw httpError(400, 'Нет цен для сохранения.');
+  if (changes.length > 200) throw httpError(400, 'За один раз можно изменить не более 200 товаров.');
+
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const priceTypes = await getMoySkladPriceTypes(token);
+  const priceType = priceTypes.find((item) => item.href === priceTypeHref);
+  if (!priceType) throw httpError(400, 'Выбранный тип цены не найден в МойСклад.');
+
+  const normalized = changes.map((change) => {
+    const productId = String(change.productId || '').trim();
+    const value = toMoney(change.value);
+    if (!/^[0-9a-f-]{36}$/i.test(productId)) throw httpError(400, 'Некорректный идентификатор товара.');
+    if (!Number.isFinite(value) || value < 0 || value > 1000000000) {
+      throw httpError(400, 'Цена должна быть от 0 до 1 000 000 000.');
+    }
+    return { productId, value: roundMoney(value) };
+  });
+
+  const results = await mapWithConcurrency(normalized, 5, async (change) => {
+    try {
+      await updateMoySkladProductPrice(token, change, priceType);
+      return { productId: change.productId, value: change.value, ok: true };
+    } catch (error) {
+      return { productId: change.productId, value: change.value, ok: false, error: error.message };
+    }
+  });
+
+  return {
+    updated: results.filter((item) => item.ok).length,
+    failed: results.filter((item) => !item.ok).length,
+    results
+  };
+}
+
+async function updateMoySkladProductPrice(token, change, priceType) {
+  const productUrl = `${MOYSKLAD_BASE_URL}/entity/product/${change.productId}`;
+  const currentResponse = await moySkladFetch(productUrl, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
+  });
+  const product = await currentResponse.json().catch(() => null);
+  if (!currentResponse.ok) {
+    throw httpError(currentResponse.status, 'Не удалось загрузить товар перед обновлением.', product);
+  }
+
+  const salePrices = Array.isArray(product.salePrices) ? [...product.salePrices] : [];
+  const existingIndex = salePrices.findIndex((price) => price.priceType?.meta?.href === priceType.href);
+  const existing = existingIndex >= 0 ? salePrices[existingIndex] : null;
+  const currency = existing?.currency || salePrices.find((price) => price.currency)?.currency;
+  if (!currency?.meta?.href) {
+    throw httpError(400, `У товара «${product.name || change.productId}» не найдена валюта цены.`);
+  }
+
+  const newPrice = {
+    value: toMoySkladPrice(change.value),
+    currency,
+    priceType: meta(priceType.href, 'pricetype')
+  };
+  if (existingIndex >= 0) salePrices[existingIndex] = newPrice;
+  else salePrices.push(newPrice);
+
+  const updateResponse = await moySkladFetch(productUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ salePrices })
+  });
+  const updated = await updateResponse.json().catch(() => null);
+  if (!updateResponse.ok) {
+    throw httpError(updateResponse.status, `Не удалось обновить цену товара «${product.name || change.productId}».`, updated);
+  }
+}
+
+async function updateAccountingFormulaPrices(input) {
+  const changes = Array.isArray(input.changes) ? input.changes : [];
+  const priceType36Href = String(input.priceType36Href || '').trim();
+  const priceType912Href = String(input.priceType912Href || '').trim();
+  if (!changes.length) throw httpError(400, 'Нет цен для сохранения.');
+  if (changes.length > 200) throw httpError(400, 'За один раз можно изменить не более 200 товаров.');
+
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const priceTypes = await getMoySkladPriceTypes(token);
+  const priceType36 = priceTypes.find((item) => item.href === priceType36Href);
+  const priceType912 = priceTypes.find((item) => item.href === priceType912Href);
+  if (!priceType36) throw httpError(400, 'Тип цены 3-6 не найден в МойСклад.');
+  if (!priceType912) throw httpError(400, 'Тип цены 9-12 не найден в МойСклад.');
+
+  const normalized = changes.map((change) => {
+    const productId = String(change.productId || '').trim();
+    const minPrice = toMoney(change.minPrice);
+    const price36 = toMoney(change.price36);
+    const price912 = toMoney(change.price912);
+    if (!/^[0-9a-f-]{36}$/i.test(productId)) throw httpError(400, 'Некорректный идентификатор товара.');
+    for (const value of [minPrice, price36, price912]) {
+      if (!Number.isFinite(value) || value < 0 || value > 1000000000) {
+        throw httpError(400, 'Цена должна быть от 0 до 1 000 000 000.');
+      }
+    }
+    return {
+      productId,
+      minPrice: roundMoney(minPrice),
+      price36: roundMoney(price36),
+      price912: roundMoney(price912)
+    };
+  });
+
+  const results = await mapWithConcurrency(normalized, 5, async (change) => {
+    try {
+      await updateMoySkladProductFormulaPrices(token, change, priceType36, priceType912);
+      return { productId: change.productId, minPrice: change.minPrice, price36: change.price36, price912: change.price912, ok: true };
+    } catch (error) {
+      return { productId: change.productId, minPrice: change.minPrice, price36: change.price36, price912: change.price912, ok: false, error: error.message };
+    }
+  });
+
+  return {
+    updated: results.filter((item) => item.ok).length,
+    failed: results.filter((item) => !item.ok).length,
+    results
+  };
+}
+
+async function updateMoySkladProductFormulaPrices(token, change, priceType36, priceType912) {
+  const productUrl = `${MOYSKLAD_BASE_URL}/entity/product/${change.productId}`;
+  const currentResponse = await moySkladFetch(productUrl, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
+  });
+  const product = await currentResponse.json().catch(() => null);
+  if (!currentResponse.ok) {
+    throw httpError(currentResponse.status, 'Не удалось загрузить товар перед обновлением.', product);
+  }
+
+  const salePrices = Array.isArray(product.salePrices) ? [...product.salePrices] : [];
+  const currency = findKgsPriceCurrency(product, salePrices, [priceType36.href, priceType912.href]);
+  if (!currency?.meta?.href) {
+    throw httpError(400, `У товара «${product.name || change.productId}» не найдена валюта KGS для цен.`);
+  }
+
+  upsertSalePrice(salePrices, priceType36, change.price36, currency);
+  upsertSalePrice(salePrices, priceType912, change.price912, currency);
+
+  const updateResponse = await moySkladFetch(productUrl, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      minPrice: { value: toMoySkladPrice(change.minPrice), currency },
+      salePrices
+    })
+  });
+  const updated = await updateResponse.json().catch(() => null);
+  if (!updateResponse.ok) {
+    throw httpError(updateResponse.status, `Не удалось обновить цены товара «${product.name || change.productId}».`, updated);
+  }
+}
+
+function upsertSalePrice(salePrices, priceType, value, currency) {
+  const nextPrice = {
+    value: toMoySkladPrice(value),
+    currency,
+    priceType: meta(priceType.href, 'pricetype')
+  };
+  const index = salePrices.findIndex((price) => price.priceType?.meta?.href === priceType.href);
+  if (index >= 0) salePrices[index] = nextPrice;
+  else salePrices.push(nextPrice);
+}
+
+function findKgsPriceCurrency(product, salePrices, preferredPriceTypeHrefs = []) {
+  const preferred = salePrices.find((price) =>
+    preferredPriceTypeHrefs.includes(price.priceType?.meta?.href) && isKgsCurrency(price.currency)
+  )?.currency;
+  if (preferred) return preferred;
+  if (isKgsCurrency(product.minPrice?.currency)) return product.minPrice.currency;
+  return salePrices.find((price) => isKgsCurrency(price.currency))?.currency
+    || product.minPrice?.currency
+    || salePrices.find((price) => price.currency)?.currency;
+}
+
+function isKgsCurrency(currency) {
+  const value = String([currency?.isoCode, currency?.name, currency?.fullName].filter(Boolean).join(' ')).toLowerCase();
+  return value.includes('kgs') || value.includes('сом');
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 function getProductSearchQueries(search) {
   const query = String(search || '').trim();
   if (!query) {
@@ -961,16 +1698,34 @@ function getProductBarcode(product) {
 
 function getProductPrice(product) {
   const salePrices = Array.isArray(product.salePrices) ? product.salePrices : [];
-  const preferredName = process.env.MOYSKLAD_PRODUCT_PRICE_NAME || 'Цена 6м';
-  const salePrice = salePrices.find((price) => {
-    const typeName = String(price.priceType?.name || '').trim().toLowerCase();
-    return typeName === preferredName.trim().toLowerCase();
-  }) || salePrices.find((price) => Number(price.value) > 0) || salePrices[0];
+  const preferredName = process.env.MOYSKLAD_PRODUCT_PRICE_NAME || '3-6';
+  const salePrice = findPreferredProductSalePrice(salePrices, preferredName);
 
   if (!salePrice || !Number.isFinite(Number(salePrice.value))) {
     return 0;
   }
   return roundMoney(Number(salePrice.value) / 100);
+}
+
+function findPreferredProductSalePrice(salePrices, preferredName) {
+  const preferred = normalizePriceTypeName(preferredName);
+  const normalizedPrices = salePrices.map((price) => ({
+    price,
+    name: normalizePriceTypeName(price.priceType?.name || '')
+  }));
+
+  return normalizedPrices.find((item) => item.name && item.name === preferred)?.price
+    || normalizedPrices.find((item) => item.name && (item.name.includes(preferred) || preferred.includes(item.name)))?.price
+    || normalizedPrices.find((item) => item.name.includes('3-6') || item.name.includes('3 6'))?.price
+    || null;
+}
+
+function normalizePriceTypeName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[–—]/g, '-')
+    .replace(/\s+/g, ' ');
 }
 
 function getProductCost(product) {
@@ -979,6 +1734,43 @@ function getProductCost(product) {
     return 0;
   }
   return roundMoney(Number(buyPrice.value) / 100);
+}
+
+function getReportPositionCostTotal(position, documentMoneyRate = 1) {
+  const buyPrice = position.assortment?.buyPrice;
+  if (!buyPrice || !Number.isFinite(Number(buyPrice.value))) {
+    return 0;
+  }
+  const value = Number(buyPrice.value) / 100;
+  const cost = shouldConvertReportBuyPriceToKgs(buyPrice, position, documentMoneyRate)
+    ? value * getReportUsdCostRate(documentMoneyRate)
+    : value;
+  return roundMoney(cost * Number(position.quantity || 0));
+}
+
+function shouldConvertReportBuyPriceToKgs(buyPrice, position, documentMoneyRate = 1) {
+  if (isKgsCurrency(buyPrice.currency)) return false;
+  if (isUsdCurrency(buyPrice.currency)) return true;
+  if (documentMoneyRate > 1) return true;
+
+  const unitCost = Number(buyPrice.value || 0) / 100;
+  const unitSalePrice = fromMoySkladPrice(position.price);
+  return unitCost > 0 && unitSalePrice > 0 && unitCost < unitSalePrice * 0.45;
+}
+
+function isUsdCurrency(currency) {
+  const value = String([currency?.isoCode, currency?.name, currency?.fullName].filter(Boolean).join(' ')).toLowerCase();
+  return value.includes('usd') || value.includes('доллар');
+}
+
+function getReportUsdCostRate(documentRate) {
+  const documentRateNumber = Number(documentRate);
+  if (Number.isFinite(documentRateNumber) && documentRateNumber > 10 && documentRateNumber < 200) {
+    return documentRateNumber;
+  }
+
+  const envRate = Number(process.env.MOYSKLAD_REPORT_USD_RATE || process.env.MOYSKLAD_COST_USD_RATE || 88);
+  return Number.isFinite(envRate) && envRate > 0 ? envRate : 88;
 }
 
 async function getMoySkladPaymentTypes() {
@@ -1009,7 +1801,22 @@ async function getMoySkladPaymentTypes() {
         rate: getPaymentRate(parsed.provider, parsed.months, rateFromComment)
       };
     })
-    .sort((left, right) => left.provider.localeCompare(right.provider, 'ru') || left.months - right.months);
+    .sort(comparePaymentTypes);
+}
+
+function comparePaymentTypes(left, right) {
+  return getPaymentSortWeight(left) - getPaymentSortWeight(right)
+    || left.provider.localeCompare(right.provider, 'ru')
+    || left.months - right.months
+    || left.name.localeCompare(right.name, 'ru');
+}
+
+function getPaymentSortWeight(paymentType) {
+  const name = String(paymentType?.name || '').toLowerCase();
+  if (name.includes('налич') || name.includes('cash')) return 10;
+  if (name.includes('долг')) return 20;
+  if (name.includes('qr')) return 30;
+  return 40;
 }
 
 async function getSalesReport(input) {
@@ -1074,20 +1881,10 @@ async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo
       offset: String(offset),
       order: 'moment,desc',
       filter: filters.join(';'),
-      expand: 'agent,organization,store,retailStore,retailShift,positions,positions.assortment'
+      expand: 'agent,organization,store,retailStore,retailShift,positions,positions.assortment,rate.currency'
     });
 
-    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}?${params}`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json;charset=utf-8'
-      }
-    });
-
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw httpError(response.status, `Не удалось загрузить отчет ${getDocumentTypeLabel(documentType)} из МойСклад.`, data);
-    }
+    const data = await loadMoySkladReportPage(token, documentType, params);
 
     rows.push(...(data.rows || []).map((row) => ({ ...row, reportDocumentType: documentType })));
     if (!data.rows || data.rows.length < limit) {
@@ -1099,18 +1896,62 @@ async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo
   return rows;
 }
 
+async function loadMoySkladReportPage(token, documentType, params) {
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/json;charset=utf-8'
+  };
+  const url = `${MOYSKLAD_BASE_URL}/entity/${documentType}?${params}`;
+
+  try {
+    const response = await moySkladFetch(url, { headers });
+    const data = await response.json().catch(() => null);
+    if (response.ok) return data;
+
+    if (String(params.get('expand') || '').includes('rate.currency')) {
+      return loadMoySkladReportPageWithoutCurrency(token, documentType, params, headers, response.status, data);
+    }
+    throw httpError(response.status, `Не удалось загрузить отчет ${getDocumentTypeLabel(documentType)} из МойСклад.`, data);
+  } catch (error) {
+    if (!String(params.get('expand') || '').includes('rate.currency')) {
+      throw error;
+    }
+    return loadMoySkladReportPageWithoutCurrency(token, documentType, params, headers, error.status, error.details);
+  }
+}
+
+async function loadMoySkladReportPageWithoutCurrency(token, documentType, params, headers, originalStatus, originalData) {
+  const fallbackParams = new URLSearchParams(params);
+  fallbackParams.set('expand', 'agent,organization,store,retailStore,retailShift,positions,positions.assortment');
+  const fallbackUrl = `${MOYSKLAD_BASE_URL}/entity/${documentType}?${fallbackParams}`;
+  const fallbackResponse = await moySkladFetch(fallbackUrl, { headers });
+  const fallbackData = await fallbackResponse.json().catch(() => null);
+  if (fallbackResponse.ok) return fallbackData;
+  throw httpError(
+    fallbackResponse.status || originalStatus || 500,
+    `Не удалось загрузить отчет ${getDocumentTypeLabel(documentType)} из МойСклад.`,
+    fallbackData || originalData
+  );
+}
+
 function mapReportDocument(document) {
   const documentType = document.reportDocumentType || document.meta?.type || '';
   const positions = Array.isArray(document.positions?.rows) ? document.positions.rows : [];
-  const amount = fromMoySkladPrice(document.sum);
+  const moneyRate = getReportDocumentMoneyRate(document);
+  const amount = fromReportDocumentMoney(document.sum, moneyRate);
   const paidAttribute = getReportNumberAttribute(document, 'PAID', documentType);
   const unpaidAttribute = getReportNumberAttribute(document, 'UNPAID', documentType);
   const paid = paidAttribute !== null
-    ? paidAttribute
+    ? roundMoney(paidAttribute * moneyRate)
     : documentType === 'retaildemand'
-      ? roundMoney(fromMoySkladPrice(document.cashSum) + fromMoySkladPrice(document.noCashSum))
-      : fromMoySkladPrice(document.payedSum);
-  const unpaid = unpaidAttribute !== null ? unpaidAttribute : roundMoney(Math.max(0, amount - paid));
+      ? roundMoney(fromReportDocumentMoney(document.cashSum, moneyRate) + fromReportDocumentMoney(document.noCashSum, moneyRate))
+      : fromReportDocumentMoney(document.payedSum, moneyRate);
+  const unpaid = unpaidAttribute !== null
+    ? roundMoney(unpaidAttribute * moneyRate)
+    : roundMoney(Math.max(0, amount - paid));
+  const costTotal = roundMoney(positions.reduce((sum, position) => sum + getReportPositionCostTotal(position, moneyRate), 0));
+  const commission = roundMoney(getReportMoneyFromTextAttribute(document, 'COMMISSION', documentType) * moneyRate);
+  const calculatedNetProfit = costTotal > 0 ? roundMoney(amount - commission - costTotal) : null;
 
   return {
     id: document.id,
@@ -1131,8 +1972,8 @@ function mapReportDocument(document) {
       code: position.assortment?.code || '',
       name: position.assortment?.name || position.name || 'Товар',
       quantity: Number(position.quantity || 0),
-      price: fromMoySkladPrice(position.price),
-      sum: fromMoySkladPrice(position.price) * Number(position.quantity || 0)
+      price: fromReportDocumentMoney(position.price, moneyRate),
+      sum: roundMoney(fromReportDocumentMoney(position.price, moneyRate) * Number(position.quantity || 0))
     })),
     productText: buildReportProductText(positions.map((position) => {
       const name = position.assortment?.name || position.name || 'Товар';
@@ -1142,10 +1983,26 @@ function mapReportDocument(document) {
     amount,
     paid,
     unpaid,
-    commission: getReportMoneyFromTextAttribute(document, 'COMMISSION', documentType),
-    netProfit: getReportNumberAttribute(document, 'NET_PROFIT', documentType) ?? 0,
+    commission,
+    netProfit: calculatedNetProfit ?? roundMoney((getReportNumberAttribute(document, 'NET_PROFIT', documentType) ?? 0) * moneyRate),
     comment: document.description || ''
   };
+}
+
+function fromReportDocumentMoney(value, rate = 1) {
+  return roundMoney(fromMoySkladPrice(value) * rate);
+}
+
+function getReportDocumentMoneyRate(document) {
+  const currency = document.rate?.currency || document.currency || document.currencyInfo;
+  if (isKgsCurrency(currency)) return 1;
+  if (isUsdCurrency(currency)) return getReportUsdCostRate(document.rate?.value);
+
+  const rateValue = Number(document.rate?.value || 0);
+  if (Number.isFinite(rateValue) && rateValue > 10 && rateValue < 200) {
+    return rateValue;
+  }
+  return 1;
 }
 
 async function createReportReturn(input) {
@@ -1741,7 +2598,11 @@ function getIdFromHref(href) {
 }
 
 async function serveStatic(pathname, res) {
-  const safePath = pathname === '/' ? '/index.html' : pathname;
+  const safePath = pathname === '/'
+    ? '/about.html'
+    : pathname === '/sales.html'
+      ? '/index.html'
+      : pathname;
   const normalized = normalize(safePath).replace(/^(\.\.[/\\])+/, '');
   const filePath = join(publicDir, normalized);
 
@@ -1783,7 +2644,9 @@ async function moySkladFetch(url, options = {}) {
     if (error.name === 'AbortError') {
       throw httpError(504, 'МойСклад слишком долго отвечает. Попробуйте еще раз.');
     }
-    throw error;
+    throw httpError(502, 'Не удалось подключиться к МойСклад. Проверьте интернет или попробуйте еще раз.', {
+      cause: error.message || String(error)
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -1886,21 +2749,36 @@ function requiredReportEnv(name) {
 function loginReportUser(req, res, body) {
   const login = String(body.login || '').trim();
   const password = String(body.password || '');
-  const expectedLogin = requiredReportEnv('REPORT_LOGIN');
-  const expectedPassword = requiredReportEnv('REPORT_PASSWORD');
+  const crmUser = authenticateCrmUser(login, password);
+  const legacyMatch = safeEqual(login, requiredReportEnv('REPORT_LOGIN'))
+    && safeEqual(password, requiredReportEnv('REPORT_PASSWORD'));
+  const user = crmUser || (legacyMatch ? { login, name: 'Владелец', role: 'owner' } : null);
 
-  if (!safeEqual(login, expectedLogin) || !safeEqual(password, expectedPassword)) {
+  if (!user || !['admin', 'owner', 'accountant'].includes(user.role)) {
     throw httpError(401, 'Неверный логин или пароль.');
   }
 
   setReportSession(res, login);
-  sendJson(res, 200, { ok: true });
+  setCrmSession(res, user, { append: true });
+  sendJson(res, 200, { ok: true, user });
 }
 
 function requireReportAuth(req) {
+  const user = getCrmUser(req);
+  if (user && ['admin', 'owner', 'accountant', 'employee'].includes(user.role)) return user;
+  if (user) throw httpError(403, 'Отчетность недоступна для вашей роли.');
   if (!isReportAuthenticated(req)) {
     throw httpError(401, 'Войдите в отчетность.');
   }
+  return { login: 'legacy-report', name: 'Владелец', role: 'owner' };
+}
+
+function requireAccountingAuth(req) {
+  const user = getCrmUser(req);
+  if (user && ['admin', 'owner', 'accountant'].includes(user.role)) return user;
+  if (user) throw httpError(403, 'Бухгалтерия недоступна для вашей роли.');
+  if (isReportAuthenticated(req)) return { login: 'legacy-report', name: 'Бухгалтер', role: 'accountant' };
+  throw httpError(401, 'Войдите в бухгалтерию.');
 }
 
 function isReportAuthenticated(req) {
@@ -1934,6 +2812,107 @@ function setReportSession(res, login) {
   })).toString('base64url');
   const token = `${payload}.${signReportPayload(payload)}`;
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
+}
+
+function getCrmUsers() {
+  return [
+    { role: 'admin', login: process.env.CRM_ADMIN_LOGIN || 'admin', password: process.env.CRM_ADMIN_PASSWORD || 'admin2026', name: process.env.CRM_ADMIN_NAME || 'Администратор' },
+    { role: 'owner', login: process.env.CRM_OWNER_LOGIN || process.env.REPORT_LOGIN || 'owner', password: process.env.CRM_OWNER_PASSWORD || process.env.REPORT_PASSWORD || 'owner2026', name: process.env.CRM_OWNER_NAME || 'Владелец' },
+    { role: 'accountant', login: process.env.CRM_ACCOUNTANT_LOGIN || 'accountant', password: process.env.CRM_ACCOUNTANT_PASSWORD || 'accountant2026', name: process.env.CRM_ACCOUNTANT_NAME || 'Бухгалтер' },
+    { role: 'employee', login: process.env.CRM_EMPLOYEE_LOGIN || 'employee', password: process.env.CRM_EMPLOYEE_PASSWORD || 'employee2026', name: process.env.CRM_EMPLOYEE_NAME || 'Сотрудник' }
+  ];
+}
+
+function authenticateCrmUser(login, password) {
+  const normalizedLogin = String(login || '').trim();
+  const normalizedPassword = String(password || '');
+  const found = getCrmUsers().find((user) => safeEqual(normalizedLogin, user.login) && safeEqual(normalizedPassword, user.password));
+  return found ? { login: found.login, name: found.name, role: found.role } : null;
+}
+
+function requireAnyAuthenticatedUser(req) {
+  const user = getCrmUser(req);
+  if (user || isReportAuthenticated(req)) return user || { login: 'legacy-report', name: 'Владелец', role: 'owner' };
+  throw httpError(401, 'Войдите в систему.');
+}
+
+function requireCrmRole(req, roles) {
+  const user = getCrmUser(req);
+  if (!user) throw httpError(401, 'Войдите в систему.');
+  if (!roles.includes(user.role)) throw httpError(403, 'У вашей роли нет доступа к этому разделу.');
+  return user;
+}
+
+function getEffectiveUser(req, fallbackRole) {
+  return getCrmUser(req) || { login: 'legacy-report', name: fallbackRole === 'accountant' ? 'Бухгалтер' : 'Владелец', role: fallbackRole };
+}
+
+function getCrmUser(req) {
+  const token = parseCookies(req.headers.cookie || '')[crmCookieName];
+  if (!token) return null;
+  const [payloadPart, signature] = token.split('.');
+  if (!payloadPart || !signature || !safeEqual(signature, signCrmPayload(payloadPart))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+    if (!payload.exp || payload.exp <= Date.now()) return null;
+    return { login: payload.login, name: payload.name, role: payload.role };
+  } catch {
+    return null;
+  }
+}
+
+function setCrmSession(res, user, options = {}) {
+  const payload = Buffer.from(JSON.stringify({ ...user, exp: Date.now() + 12 * 60 * 60 * 1000 })).toString('base64url');
+  const cookie = `${crmCookieName}=${payload}.${signCrmPayload(payload)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`;
+  if (options.append) {
+    const existing = res.getHeader('Set-Cookie');
+    res.setHeader('Set-Cookie', [...(Array.isArray(existing) ? existing : existing ? [existing] : []), cookie]);
+  } else {
+    res.setHeader('Set-Cookie', cookie);
+  }
+}
+
+function clearCrmSession(res) {
+  res.setHeader('Set-Cookie', [
+    `${crmCookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+    `${reportCookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`
+  ]);
+}
+
+function signCrmPayload(payload) {
+  const secret = process.env.CRM_SESSION_SECRET || process.env.REPORT_SESSION_SECRET || process.env.MOYSKLAD_TOKEN || 'local-crm-secret';
+  return createHmac('sha256', secret).update(payload).digest('base64url');
+}
+
+async function writeAudit(entry) {
+  try {
+    await mkdir(dataDir, { recursive: true });
+    const row = {
+      id: randomUUID(),
+      createdAt: new Date().toISOString(),
+      userLogin: entry.user?.login || 'system',
+      userName: entry.user?.name || 'Система',
+      role: entry.user?.role || 'system',
+      action: entry.action || 'unknown',
+      entity: entry.entity || '',
+      entityId: entry.entityId || '',
+      description: entry.description || '',
+      details: entry.details || {}
+    };
+    await appendFile(auditLogPath, `${JSON.stringify(row)}\n`, 'utf8');
+  } catch (error) {
+    console.error('Audit log error:', error.message);
+  }
+}
+
+async function readAuditLog(limit) {
+  try {
+    const content = await readFile(auditLogPath, 'utf8');
+    return content.split('\n').filter(Boolean).slice(-limit).reverse().map((line) => JSON.parse(line));
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
 }
 
 function clearReportSession(res) {

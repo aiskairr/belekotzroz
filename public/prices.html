@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Массовое редактирование цен</title>
+    <link rel="stylesheet" href="/prices.css">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main class="price-app">
+      <section id="pricePanel" class="price-panel hidden">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">МойСклад</p>
+            <h1>Массовое редактирование цен</h1>
+            <p>Выберите товары, рассчитайте новые цены и проверьте результат перед сохранением.</p>
+          </div>
+        </header>
+
+        <section class="toolbar">
+          <label class="search-field">
+            <span>Поиск товара</span>
+            <input id="searchInput" type="search" placeholder="Название, код или артикул">
+          </label>
+          <label>
+            <span>Тип цены</span>
+            <select id="priceTypeSelect"></select>
+          </label>
+          <label class="archive-toggle">
+            <input id="showArchived" type="checkbox">
+            <span>Показывать архивные</span>
+          </label>
+          <button id="reloadButton" class="secondary" type="button">Обновить каталог</button>
+        </section>
+
+        <section class="bulk-panel">
+          <div class="bulk-heading">
+            <div>
+              <h2>Массовая операция</h2>
+              <p id="selectionStatus">Не выбрано ни одного товара</p>
+            </div>
+            <button id="clearChangesButton" class="secondary" type="button">Сбросить изменения</button>
+          </div>
+          <div class="bulk-controls">
+            <label>
+              <span>Действие</span>
+              <select id="operationSelect">
+                <option value="set">Установить цену</option>
+                <option value="increasePercent">Увеличить на %</option>
+                <option value="decreasePercent">Уменьшить на %</option>
+                <option value="increaseAmount">Прибавить сумму</option>
+                <option value="decreaseAmount">Вычесть сумму</option>
+              </select>
+            </label>
+            <label>
+              <span>Значение</span>
+              <input id="operationValue" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Округление</span>
+              <select id="roundingSelect">
+                <option value="0">Не округлять</option>
+                <option value="1">До 1 сома</option>
+                <option value="10">До 10 сом</option>
+                <option value="100">До 100 сом</option>
+              </select>
+            </label>
+            <button id="calculateButton" type="button">Рассчитать выбранные</button>
+          </div>
+        </section>
+
+        <section class="summary-grid">
+          <article><span>Загружено / всего</span><strong id="catalogCount">0</strong></article>
+          <article><span>Найдено</span><strong id="filteredCount">0</strong></article>
+          <article><span>Выбрано</span><strong id="selectedCount">0</strong></article>
+          <article class="changed-card"><span>Изменено к сохранению</span><strong id="changedCount">0</strong></article>
+        </section>
+
+        <section class="table-card">
+          <div class="table-title">
+            <div>
+              <h2>Товары</h2>
+              <p id="catalogStatus" class="status">Загрузка каталога...</p>
+            </div>
+            <button id="saveButton" class="save-button" type="button" disabled>Сохранить выбранные</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input id="selectPage" type="checkbox" aria-label="Выбрать товары на странице"></th>
+                  <th>Код</th>
+                  <th>Наименование</th>
+                  <th>Текущая цена</th>
+                  <th>Новая цена</th>
+                  <th>Изменение</th>
+                </tr>
+              </thead>
+              <tbody id="productRows"></tbody>
+            </table>
+          </div>
+          <footer class="pagination">
+            <button id="prevPage" class="secondary" type="button">Назад</button>
+            <span id="pageLabel">Страница 1</span>
+            <button id="nextPage" class="secondary" type="button">Вперед</button>
+          </footer>
+        </section>
+      </section>
+    </main>
+    <script src="/prices.js" type="module"></script>
+  </body>
+</html>
