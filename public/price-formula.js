@@ -16,18 +16,19 @@ const state = {
   loadingCatalog: false,
   loadGeneration: 0,
   supplyFilter: null,
-  supplyName: ''
+  supplyName: '',
+  productTemplates: new Map()
 };
 
 const els = Object.fromEntries([
-  'formulaPanel', 'priceType36Select', 'priceType912Select', 'usdRateInput', 'markupInput',
-  'markupModeSelect', 'bank36Input', 'bank912Input', 'roundingSelect', 'searchInput', 'folderSelect', 'folderLabel',
+  'formulaPanel', 'priceType36Select', 'priceType912Select', 'priceTypeWholesaleSelect', 'usdRateInput', 'markupInput',
+  'markupModeSelect', 'bank36Input', 'bank912Input', 'calculate36Input', 'calculate912Input', 'roundingSelect', 'searchInput', 'folderSelect', 'folderLabel',
   'supplyProductsButton', 'selectFolderButton', 'reloadButton',
   'calculateButton', 'catalogCount', 'selectedCount', 'changedCount', 'skippedCount', 'catalogStatus',
   'saveButton', 'productRows', 'selectPage', 'prevPage', 'nextPage', 'pageLabel', 'templateSelect',
   'templateNameInput', 'saveTemplateButton', 'deleteTemplateButton', 'assignTemplateButton',
-  'groupTemplateStatus', 'tierCard', 'tierRows', 'addTierButton',
-  'fallbackMarkupModeSelect', 'fallbackMarkupInput'
+  'groupTemplateStatus', 'tierRows', 'addTierButton', 'wholesaleTierRows', 'addWholesaleTierButton',
+  'fallbackMarkupModeSelect', 'fallbackMarkupInput', 'wholesaleFallbackMarkupModeSelect', 'wholesaleFallbackMarkupInput'
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 init();
@@ -36,6 +37,7 @@ async function init() {
   bindEvents();
   loadSettings();
   renderTierRows(getTierSettings());
+  renderWholesaleTierRows(getWholesaleTierSettings());
   renderTierVisibility();
   const user = await initCrmShell({ page: 'priceFormula', allowedRoles: ['admin', 'owner', 'accountant'] });
   if (user) await showPage();
@@ -52,20 +54,28 @@ function bindEvents() {
   els.deleteTemplateButton.addEventListener('click', deleteSelectedTemplate);
   els.assignTemplateButton.addEventListener('click', assignCurrentTemplateToFolder);
   els.addTierButton.addEventListener('click', () => addTierRow({ from: '', to: '', amount: '' }));
+  els.addWholesaleTierButton.addEventListener('click', () => addWholesaleTierRow({ from: '', to: '', amount: '' }));
   els.tierRows.addEventListener('input', handleTierInput);
   els.tierRows.addEventListener('click', handleTierClick);
+  els.wholesaleTierRows.addEventListener('input', handleTierInput);
+  els.wholesaleTierRows.addEventListener('click', handleTierClick);
 
   for (const element of [
     els.priceType36Select,
     els.priceType912Select,
+    els.priceTypeWholesaleSelect,
     els.usdRateInput,
     els.markupInput,
     els.markupModeSelect,
     els.bank36Input,
     els.bank912Input,
+    els.calculate36Input,
+    els.calculate912Input,
     els.roundingSelect,
     els.fallbackMarkupModeSelect,
-    els.fallbackMarkupInput
+    els.fallbackMarkupInput,
+    els.wholesaleFallbackMarkupModeSelect,
+    els.wholesaleFallbackMarkupInput
   ]) {
     element.addEventListener('change', () => {
       saveSettings();
@@ -82,6 +92,7 @@ function bindEvents() {
   els.prevPage.addEventListener('click', () => changePage(-1));
   els.nextPage.addEventListener('click', () => changePage(1));
   els.productRows.addEventListener('change', handleTableChange);
+  els.productRows.addEventListener('input', syncPriceInputFromEvent);
 }
 
 async function showPage() {
@@ -98,11 +109,12 @@ async function loadCatalog() {
   state.selected.clear();
   state.calculated.clear();
   state.skipped.clear();
+  state.productTemplates.clear();
   state.supplyFilter = null;
   state.supplyName = '';
   state.total = 0;
   state.page = 1;
-  els.productRows.innerHTML = '<tr><td colspan="11">Загружаю первые 500 товаров...</td></tr>';
+  els.productRows.innerHTML = '<tr><td colspan="13">Загружаю первые 500 товаров...</td></tr>';
   els.catalogStatus.textContent = 'Загружаю первые 500 товаров...';
   els.reloadButton.disabled = true;
 
@@ -126,7 +138,7 @@ async function loadCatalog() {
   } catch (error) {
     if (generation !== state.loadGeneration) return;
     els.catalogStatus.textContent = error.message;
-    els.productRows.innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
+    els.productRows.innerHTML = `<tr><td colspan="13">${escapeHtml(error.message)}</td></tr>`;
     finishCatalogLoading(generation);
   }
 }
@@ -176,11 +188,14 @@ function renderPriceTypes() {
   ).join('');
   els.priceType36Select.innerHTML = options;
   els.priceType912Select.innerHTML = options;
+  els.priceTypeWholesaleSelect.innerHTML = options;
 
   const type36 = findPriceType(['3-6', '3 6', '3-6м', '3 6м']);
   const type912 = findPriceType(['9-12', '9 12', '9-12м', '9 12м']);
+  const wholesale = findPriceType(['оптов', 'wholesale']);
   if (type36) els.priceType36Select.value = type36.href;
   if (type912) els.priceType912Select.value = type912.href;
+  if (wholesale) els.priceTypeWholesaleSelect.value = wholesale.href;
 }
 
 function renderFolders() {
@@ -240,14 +255,19 @@ function applySelectedTemplate() {
 function applyTemplate(template) {
   els.templateNameInput.value = template.name || '';
   els.usdRateInput.value = String(template.usdRate ?? 89);
-  els.markupInput.value = String(template.markup ?? 20);
-  els.markupModeSelect.value = template.markupMode || 'percent';
+  els.markupInput.value = '0';
+  els.markupModeSelect.value = 'tiers';
   renderTierRows(normalizeTiers(template.tiers));
+  renderWholesaleTierRows(normalizeTiers(template.wholesaleTiers || template.tiers));
   renderTierVisibility();
-  els.fallbackMarkupModeSelect.value = template.fallbackMarkupMode || 'percent';
-  els.fallbackMarkupInput.value = String(template.fallbackMarkup ?? template.markup ?? 20);
+  els.fallbackMarkupModeSelect.value = 'none';
+  els.fallbackMarkupInput.value = '0';
+  els.wholesaleFallbackMarkupModeSelect.value = 'none';
+  els.wholesaleFallbackMarkupInput.value = '0';
   els.bank36Input.value = String(template.bank36 ?? 10);
   els.bank912Input.value = String(template.bank912 ?? 20);
+  els.calculate36Input.checked = template.calculate36 !== false;
+  els.calculate912Input.checked = template.calculate912 !== false;
   els.roundingSelect.value = String(template.rounding ?? 10);
   saveSettings();
   state.calculated.clear();
@@ -270,13 +290,18 @@ async function saveCurrentTemplate() {
     id: folderHref,
     name,
     usdRate: Number(els.usdRateInput.value || 0),
-    markup: Number(els.markupInput.value || 0),
-    markupMode: els.markupModeSelect.value,
+    markup: 0,
+    markupMode: 'tiers',
     tiers: getTierSettings(),
-    fallbackMarkupMode: els.fallbackMarkupModeSelect.value,
-    fallbackMarkup: Number(els.fallbackMarkupInput.value || 0),
+    wholesaleTiers: getWholesaleTierSettings(),
+    fallbackMarkupMode: 'none',
+    fallbackMarkup: 0,
+    wholesaleFallbackMarkupMode: 'none',
+    wholesaleFallbackMarkup: 0,
     bank36: Number(els.bank36Input.value || 0),
     bank912: Number(els.bank912Input.value || 0),
+    calculate36: els.calculate36Input.checked,
+    calculate912: els.calculate912Input.checked,
     rounding: Number(els.roundingSelect.value || 0)
   };
   await saveFolderTemplate(folderHref, template, `Шаблон «${template.name}» сохранен в выбранную группу.`);
@@ -393,7 +418,7 @@ function updateFolderLabel() {
 }
 
 function renderTierVisibility() {
-  els.tierCard.classList.toggle('hidden', els.markupModeSelect.value !== 'tiers');
+  els.markupModeSelect.value = 'tiers';
 }
 
 function renderTierRows(tiers) {
@@ -403,16 +428,35 @@ function renderTierRows(tiers) {
   }
 }
 
+function renderWholesaleTierRows(tiers) {
+  els.wholesaleTierRows.innerHTML = '';
+  for (const tier of normalizeTiers(tiers)) {
+    addWholesaleTierRow(tier, { persist: false });
+  }
+}
+
 function addTierRow(tier = {}, options = { persist: true }) {
+  addTierRowTo(els.tierRows, tier, options);
+}
+
+function addWholesaleTierRow(tier = {}, options = { persist: true }) {
+  addTierRowTo(els.wholesaleTierRows, tier, options);
+}
+
+function addTierRowTo(container, tier = {}, options = { persist: true }) {
   const row = document.createElement('div');
   row.className = 'tier-row';
   row.innerHTML = `
     <input data-tier-field="from" type="number" min="0" step="0.01" placeholder="20" value="${escapeHtml(tier.from ?? '')}">
     <input data-tier-field="to" type="number" min="0" step="0.01" placeholder="40" value="${escapeHtml(tier.to ?? '')}">
     <input data-tier-field="amount" type="number" min="0" step="0.01" placeholder="1500" value="${escapeHtml(tier.amount ?? '')}">
+    <select data-tier-field="currency">
+      <option value="kgs" ${normalizeTierCurrency(tier.currency) === 'kgs' ? 'selected' : ''}>сом</option>
+      <option value="usd" ${normalizeTierCurrency(tier.currency) === 'usd' ? 'selected' : ''}>USD</option>
+    </select>
     <button class="secondary danger" data-remove-tier type="button">Удалить</button>
   `;
-  els.tierRows.append(row);
+  container.append(row);
   if (options.persist) saveSettings();
 }
 
@@ -426,8 +470,11 @@ function handleTierInput() {
 function handleTierClick(event) {
   const removeButton = event.target.closest('[data-remove-tier]');
   if (!removeButton) return;
+  const container = removeButton.closest('#wholesaleTierRows') || removeButton.closest('#tierRows');
   removeButton.closest('.tier-row')?.remove();
-  if (!getTierSettings().length) {
+  if (container === els.wholesaleTierRows && !getWholesaleTierSettings().length) {
+    renderWholesaleTierRows(getDefaultTiers());
+  } else if (container === els.tierRows && !getTierSettings().length) {
     renderTierRows(getDefaultTiers());
   }
   saveSettings();
@@ -437,18 +484,36 @@ function handleTierClick(event) {
 }
 
 function getTierSettings() {
-  return [...els.tierRows.querySelectorAll('.tier-row')].map((row) => ({
+  return getTierSettingsFrom(els.tierRows);
+}
+
+function getWholesaleTierSettings() {
+  return getTierSettingsFrom(els.wholesaleTierRows);
+}
+
+function getTierSettingsFrom(container) {
+  return [...container.querySelectorAll('.tier-row')].map((row) => ({
     from: row.querySelector('[data-tier-field="from"]')?.value || '',
     to: row.querySelector('[data-tier-field="to"]')?.value || '',
-    amount: row.querySelector('[data-tier-field="amount"]')?.value || ''
+    amount: row.querySelector('[data-tier-field="amount"]')?.value || '',
+    currency: normalizeTierCurrency(row.querySelector('[data-tier-field="currency"]')?.value)
   })).filter((tier) => tier.from !== '' || tier.to !== '' || tier.amount !== '');
 }
 
 function getParsedTiers() {
-  return getTierSettings().map((tier) => ({
+  return parseTiers(getTierSettings());
+}
+
+function getParsedWholesaleTiers() {
+  return parseTiers(getWholesaleTierSettings());
+}
+
+function parseTiers(tiers) {
+  return normalizeTiers(tiers).map((tier) => ({
     from: toOptionalNumber(tier.from, 0),
     to: toOptionalNumber(tier.to, Infinity),
-    amount: Number(tier.amount)
+    amount: Number(tier.amount),
+    currency: normalizeTierCurrency(tier.currency)
   })).filter((tier) =>
     Number.isFinite(tier.from)
       && tier.to > tier.from
@@ -462,15 +527,20 @@ function normalizeTiers(tiers) {
   return normalized.map((tier) => ({
     from: tier.from ?? '',
     to: tier.to ?? '',
-    amount: tier.amount ?? ''
+    amount: tier.amount ?? '',
+    currency: normalizeTierCurrency(tier.currency)
   }));
 }
 
 function getDefaultTiers() {
   return [
-    { from: 20, to: 40, amount: 1500 },
-    { from: 40, to: 100, amount: 2000 }
+    { from: 20, to: 40, amount: 1500, currency: 'kgs' },
+    { from: 40, to: 100, amount: 2000, currency: 'kgs' }
   ];
+}
+
+function normalizeTierCurrency(value) {
+  return String(value || '').toLowerCase() === 'usd' ? 'usd' : 'kgs';
 }
 
 function toOptionalNumber(value, fallback) {
@@ -480,15 +550,7 @@ function toOptionalNumber(value, fallback) {
 
 function getTierMarkupUsd(buyPriceUsd, tiers = getParsedTiers()) {
   const tier = tiers.find((item) => buyPriceUsd >= item.from && buyPriceUsd < item.to);
-  return tier ? tier.amount : null;
-}
-
-function getFallbackMarkup(baseKgs) {
-  const value = Number(els.fallbackMarkupInput.value || 0);
-  if (!Number.isFinite(value) || value < 0) return null;
-  return els.fallbackMarkupModeSelect.value === 'money'
-    ? value
-    : baseKgs * value / 100;
+  return tier || null;
 }
 
 function findPriceType(keys) {
@@ -540,9 +602,11 @@ function render() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const type36Href = els.priceType36Select.value;
   const type912Href = els.priceType912Select.value;
+  const wholesaleHref = els.priceTypeWholesaleSelect.value;
 
   els.productRows.innerHTML = pageProducts.map((product) => {
     const currentMin = roundMoney(Number(product.minPrice?.value || 0));
+    const currentWholesale = getPrice(product, wholesaleHref);
     const current36 = getPrice(product, type36Href);
     const current912 = getPrice(product, type912Href);
     const next = state.calculated.get(product.id) || null;
@@ -554,14 +618,16 @@ function render() {
         <td><strong>${escapeHtml(product.name)}</strong>${product.archived ? '<span class="archive-badge">Архив</span>' : ''}${skippedReason ? `<div class="muted">${escapeHtml(skippedReason)}</div>` : ''}</td>
         <td>${renderProductTemplateSelect(product)}</td>
         <td>${formatBuyPrice(product.buyPrice)}</td>
+        <td>${formatWholesale(currentWholesale, product, wholesaleHref)}</td>
+        <td>${next ? renderUsdPriceInput(product.id, 'wholesalePrice', next.wholesalePrice) : '<span class="muted">не рассчитано</span>'}</td>
         <td>${formatSom(currentMin)}</td>
         <td>${next ? renderPriceInput(product.id, 'minPrice', next.minPrice) : '<span class="muted">не рассчитано</span>'}</td>
         <td>${formatSom(current36)}</td>
-        <td>${next ? renderPriceInput(product.id, 'price36', next.price36) : '<span class="muted">не рассчитано</span>'}</td>
+        <td>${next ? renderOptionalPriceInput(product.id, 'price36', next.price36) : '<span class="muted">не рассчитано</span>'}</td>
         <td>${formatSom(current912)}</td>
-        <td>${next ? renderPriceInput(product.id, 'price912', next.price912) : '<span class="muted">не рассчитано</span>'}</td>
+        <td>${next ? renderOptionalPriceInput(product.id, 'price912', next.price912) : '<span class="muted">не рассчитано</span>'}</td>
       </tr>`;
-  }).join('') || '<tr><td colspan="11">Товары не найдены.</td></tr>';
+  }).join('') || '<tr><td colspan="13">Товары не найдены.</td></tr>';
 
   els.catalogCount.textContent = state.loadingCatalog && state.total > state.products.length
     ? `${formatNumber(state.products.length)} / ${formatNumber(state.total)}`
@@ -580,15 +646,26 @@ function renderPriceInput(productId, field, value) {
   return `<input class="price-input" data-price-product="${productId}" data-price-field="${field}" type="number" min="0" step="0.01" value="${Number(value).toFixed(2)}">`;
 }
 
+function renderUsdPriceInput(productId, field, value) {
+  return `${renderPriceInput(productId, field, value)} <span class="price-currency">USD</span>`;
+}
+
+function renderOptionalPriceInput(productId, field, value) {
+  return value === null || value === undefined
+    ? '<span class="muted">не считать</span>'
+    : renderPriceInput(productId, field, value);
+}
+
 function renderProductTemplateSelect(product) {
-  const templates = getTemplates();
+  const templates = getApplicableTemplatesForProduct(product);
   const folderHref = product.folder?.href || '';
-  const currentTemplateId = product.folder?.template ? folderHref : '';
+  const savedTemplateId = state.productTemplates.get(product.id) || (product.folder?.template ? folderHref : '');
+  const currentTemplateId = templates.some((template) => template.id === savedTemplateId) ? savedTemplateId : '';
   const disabled = !folderHref || !templates.length;
   const options = [
     `<option value="">${product.folder?.template ? 'Шаблон подгруппы' : 'Выберите шаблон'}</option>`,
     ...templates.map((template) =>
-      `<option value="${escapeHtml(template.id)}" ${template.id === currentTemplateId ? 'selected' : ''}>${escapeHtml(template.name)}</option>`
+      `<option value="${escapeHtml(template.id)}" ${template.id === currentTemplateId ? 'selected' : ''}>${escapeHtml(template.name)} — ${escapeHtml(template.folderName)}</option>`
     )
   ].join('');
 
@@ -605,7 +682,7 @@ function renderProductTemplateSelect(product) {
 function handleTableChange(event) {
   const templateSelect = event.target.closest('[data-product-template]');
   if (templateSelect) {
-    assignTemplateToProductFolder(templateSelect.dataset.productTemplate, templateSelect.value);
+    applyTemplateToProduct(templateSelect.dataset.productTemplate, templateSelect.value);
     return;
   }
 
@@ -619,42 +696,79 @@ function handleTableChange(event) {
 
   const priceInput = event.target.closest('[data-price-product]');
   if (priceInput) {
-    const productId = priceInput.dataset.priceProduct;
-    const field = priceInput.dataset.priceField;
-    const value = Number(priceInput.value);
-    if (!Number.isFinite(value) || value < 0) return;
-    const current = state.calculated.get(productId) || { productId, minPrice: 0, price36: 0, price912: 0 };
-    current[field] = roundMoney(value);
-    state.calculated.set(productId, current);
-    state.selected.add(productId);
-    state.skipped.delete(productId);
+    syncPriceInput(priceInput);
     render();
   }
 }
 
-async function assignTemplateToProductFolder(productId, templateId) {
+function syncPriceInputFromEvent(event) {
+  const priceInput = event.target.closest('[data-price-product]');
+  if (priceInput) syncPriceInput(priceInput);
+}
+
+function syncPriceInput(priceInput) {
+  const productId = priceInput.dataset.priceProduct;
+  const field = priceInput.dataset.priceField;
+  const value = Number(priceInput.value);
+  if (!Number.isFinite(value) || value < 0) return false;
+  const product = state.products.find((item) => item.id === productId);
+  const current = state.calculated.get(productId) || {
+    productId,
+    wholesaleCurrencyHref: product ? getWholesaleCurrencyHref(product) : '',
+    wholesalePrice: 0,
+    minPrice: 0,
+    price36: null,
+    price912: null
+  };
+  current[field] = roundMoney(value);
+  state.calculated.set(productId, current);
+  state.selected.add(productId);
+  state.skipped.delete(productId);
+  return true;
+}
+
+function applyTemplateToProduct(productId, templateId) {
   const product = state.products.find((item) => item.id === productId);
   const template = getTemplates().find((item) => item.id === templateId);
-  const folderHref = product?.folder?.href || '';
   if (!product) return setStatus('Товар не найден.');
-  if (!folderHref) return setStatus('У товара нет группы. Сначала назначьте группу в МойСклад.');
   if (!template) return setStatus('Выберите готовый шаблон.');
-
-  const folderName = getFolderDisplayName(product.folder);
-  const ok = await saveFolderTemplate(
-    folderHref,
-    { ...template, id: folderHref },
-    `Шаблон «${template.name}» сохранен для подгруппы «${folderName}».`
-  );
-  if (!ok) return;
-
-  const folderProducts = getFilteredProducts().filter((item) => item.folder?.href === folderHref);
-  for (const item of folderProducts) {
-    state.selected.add(item.id);
+  if (!isTemplateApplicableToProduct(template, product)) {
+    return setStatus('Этот шаблон не относится к группе выбранного товара.');
   }
-  const result = calculateProductList(folderProducts, getFormulaSettingsFromTemplate({ ...template, id: folderHref }));
-  els.catalogStatus.textContent = `Шаблон «${template.name}» применен к подгруппе «${folderName}»: рассчитано ${result.calculated}, пропущено ${result.skipped}.`;
+
+  const sameFolderProducts = getFilteredProducts().filter((item) => item.folder?.href === product.folder?.href);
+  const settings = getFormulaSettingsFromTemplate(template);
+  let calculated = 0;
+  let skipped = 0;
+  for (const item of sameFolderProducts) {
+    const result = calculateProductPrices(item, settings);
+    if (result.error) {
+      state.skipped.set(item.id, result.error);
+      state.calculated.delete(item.id);
+      skipped += 1;
+      continue;
+    }
+    state.productTemplates.set(item.id, templateId);
+    state.calculated.set(item.id, result);
+    state.skipped.delete(item.id);
+    state.selected.add(item.id);
+    calculated += 1;
+  }
+
+  els.catalogStatus.textContent = skipped
+    ? `Шаблон «${template.name}» применен к подгруппе: ${calculated}. Пропущено: ${skipped}.`
+    : `Шаблон «${template.name}» применен к товарам этой подгруппы: ${calculated}.`;
   render();
+}
+
+function getApplicableTemplatesForProduct(product) {
+  return getTemplates().filter((template) => isTemplateApplicableToProduct(template, product));
+}
+
+function isTemplateApplicableToProduct(template, product) {
+  const productFolderHref = product.folder?.href || '';
+  if (!productFolderHref) return false;
+  return template.folderHref === productFolderHref;
 }
 
 function selectCurrentPage() {
@@ -726,69 +840,14 @@ function calculateSelected(options = {}) {
     return;
   }
 
-  const rate = Number(els.usdRateInput.value);
-  const markup = Number(els.markupInput.value);
-  const markupMode = els.markupModeSelect.value;
-  const tiers = markupMode === 'tiers' ? getParsedTiers() : [];
-  const bank36 = Number(els.bank36Input.value);
-  const bank912 = Number(els.bank912Input.value);
-  const rounding = Number(els.roundingSelect.value || 0);
-  if (!Number.isFinite(rate) || rate <= 0) return setStatus('Введите корректный курс доллара.');
-  if (markupMode !== 'tiers' && (!Number.isFinite(markup) || markup < 0)) {
-    return setStatus('Введите корректную наценку минимальной цены.');
-  }
-  if (markupMode === 'tiers' && !tiers.length) {
-    return setStatus('Добавьте хотя бы один корректный диапазон наценки.');
-  }
-  if (markupMode === 'tiers') {
-    const fallback = Number(els.fallbackMarkupInput.value || 0);
-    if (!Number.isFinite(fallback) || fallback < 0) {
-      return setStatus('Введите корректную запасную наценку для товаров вне диапазона.');
-    }
-  }
-  if (!Number.isFinite(bank36) || bank36 < 0) return setStatus('Введите корректный процент банка 3-6.');
-  if (!Number.isFinite(bank912) || bank912 < 0) return setStatus('Введите корректный процент банка 9-12.');
+  const settings = getFormulaSettingsFromForm();
+  const validationError = validateFormulaSettings(settings);
+  if (validationError) return setStatus(validationError);
 
   saveSettings();
   state.skipped.clear();
-  let calculated = 0;
-  let skipped = 0;
-  for (const product of state.products) {
-    if (!state.selected.has(product.id)) continue;
-    const buyPrice = Number(product.buyPrice?.value || 0);
-    if (buyPrice <= 0) {
-      state.skipped.set(product.id, 'Нет закупочной цены');
-      state.calculated.delete(product.id);
-      skipped += 1;
-      continue;
-    }
-    if (!isUsdBuyPrice(product.buyPrice)) {
-      state.skipped.set(product.id, 'Закупка не в USD');
-      state.calculated.delete(product.id);
-      skipped += 1;
-      continue;
-    }
-
-    const baseKgs = buyPrice * rate;
-    const tierMarkup = markupMode === 'tiers' ? getTierMarkupUsd(buyPrice, tiers) : null;
-    const fallbackMarkup = markupMode === 'tiers' && tierMarkup === null ? getFallbackMarkup(baseKgs) : null;
-
-    const minRaw = markupMode === 'tiers'
-      ? baseKgs + (tierMarkup ?? fallbackMarkup)
-      : markupMode === 'money'
-        ? baseKgs + markup
-        : baseKgs * (1 + markup / 100);
-    const minPrice = roundBy(minRaw, rounding);
-    const price36 = roundBy(minPrice * (1 + bank36 / 100), rounding);
-    const price912 = roundBy(minPrice * (1 + bank912 / 100), rounding);
-    state.calculated.set(product.id, {
-      productId: product.id,
-      minPrice: Math.max(0, roundMoney(minPrice)),
-      price36: Math.max(0, roundMoney(price36)),
-      price912: Math.max(0, roundMoney(price912))
-    });
-    calculated += 1;
-  }
+  const selectedProducts = state.products.filter((product) => state.selected.has(product.id));
+  const { calculated, skipped } = calculateProductList(selectedProducts, settings);
 
   if (options.status) {
     els.catalogStatus.textContent = options.status(calculated, skipped);
@@ -800,47 +859,50 @@ function calculateSelected(options = {}) {
   render();
 }
 
+function getFormulaSettingsFromForm() {
+  return {
+    rate: Number(els.usdRateInput.value || 0),
+    markup: 0,
+    markupMode: 'tiers',
+    tiers: getParsedTiers(),
+    wholesaleTiers: getParsedWholesaleTiers(),
+    fallbackMarkupMode: 'none',
+    fallbackMarkup: 0,
+    wholesaleFallbackMarkupMode: 'none',
+    wholesaleFallbackMarkup: 0,
+    bank36: Number(els.bank36Input.value || 0),
+    bank912: Number(els.bank912Input.value || 0),
+    calculate36: els.calculate36Input.checked,
+    calculate912: els.calculate912Input.checked,
+    rounding: Number(els.roundingSelect.value || 0)
+  };
+}
+
 function getFormulaSettingsFromTemplate(template) {
-  const markupMode = template.markupMode || 'percent';
   return {
     rate: Number(template.usdRate ?? 89),
-    markup: Number(template.markup ?? 20),
-    markupMode,
-    tiers: markupMode === 'tiers' ? parseTiers(template.tiers) : [],
-    fallbackMarkupMode: template.fallbackMarkupMode || 'percent',
-    fallbackMarkup: Number(template.fallbackMarkup ?? template.markup ?? 20),
+    markup: 0,
+    markupMode: 'tiers',
+    tiers: parseTiers(template.tiers),
+    wholesaleTiers: parseTiers(template.wholesaleTiers || template.tiers),
+    fallbackMarkupMode: 'none',
+    fallbackMarkup: 0,
+    wholesaleFallbackMarkupMode: 'none',
+    wholesaleFallbackMarkup: 0,
     bank36: Number(template.bank36 ?? 10),
     bank912: Number(template.bank912 ?? 20),
+    calculate36: template.calculate36 !== false,
+    calculate912: template.calculate912 !== false,
     rounding: Number(template.rounding ?? 10)
   };
 }
 
-function parseTiers(tiers) {
-  return normalizeTiers(tiers).map((tier) => ({
-    from: toOptionalNumber(tier.from, 0),
-    to: toOptionalNumber(tier.to, Infinity),
-    amount: Number(tier.amount)
-  })).filter((tier) =>
-    Number.isFinite(tier.from)
-      && tier.to > tier.from
-      && Number.isFinite(tier.amount)
-      && tier.amount >= 0
-  ).sort((left, right) => left.from - right.from);
-}
-
 function validateFormulaSettings(settings) {
   if (!Number.isFinite(settings.rate) || settings.rate <= 0) return 'Введите корректный курс доллара.';
-  if (settings.markupMode !== 'tiers' && (!Number.isFinite(settings.markup) || settings.markup < 0)) {
-    return 'Введите корректную наценку минимальной цены.';
-  }
-  if (settings.markupMode === 'tiers' && !settings.tiers.length) {
-    return 'Добавьте хотя бы один корректный диапазон наценки.';
-  }
-  if (settings.markupMode === 'tiers' && (!Number.isFinite(settings.fallbackMarkup) || settings.fallbackMarkup < 0)) {
-    return 'Введите корректную запасную наценку для товаров вне диапазона.';
-  }
-  if (!Number.isFinite(settings.bank36) || settings.bank36 < 0) return 'Введите корректный процент банка 3-6.';
-  if (!Number.isFinite(settings.bank912) || settings.bank912 < 0) return 'Введите корректный процент банка 9-12.';
+  if (!settings.tiers.length) return 'Добавьте хотя бы один корректный диапазон наценки.';
+  if (!settings.wholesaleTiers.length) return 'Добавьте хотя бы один корректный диапазон для оптовой цены.';
+  if (settings.calculate36 && (!Number.isFinite(settings.bank36) || settings.bank36 < 0)) return 'Введите корректный процент банка 3-6.';
+  if (settings.calculate912 && (!Number.isFinite(settings.bank912) || settings.bank912 < 0)) return 'Введите корректный процент банка 9-12.';
   return '';
 }
 
@@ -871,45 +933,74 @@ function calculateProductList(products, settings) {
 function calculateProductPrices(product, settings) {
   const buyPrice = Number(product.buyPrice?.value || 0);
   if (buyPrice <= 0) return { error: 'Нет закупочной цены' };
-  if (!isUsdBuyPrice(product.buyPrice)) return { error: 'Закупка не в USD' };
+  const buyCurrency = getBuyPriceCurrency(product.buyPrice);
+  if (buyCurrency === 'unknown') return { error: 'Валюта закупки не USD и не KGS' };
 
-  const baseKgs = buyPrice * settings.rate;
-  const tierMarkup = settings.markupMode === 'tiers' ? getTierMarkupUsd(buyPrice, settings.tiers) : null;
-  const fallbackMarkup = settings.markupMode === 'tiers' && tierMarkup === null
-    ? getFallbackMarkupBySettings(baseKgs, settings)
-    : null;
+  const buyPriceUsd = buyCurrency === 'kgs' ? buyPrice / settings.rate : buyPrice;
+  const baseKgs = buyCurrency === 'kgs' ? buyPrice : buyPrice * settings.rate;
+  const tier = getTierMarkupUsd(buyPriceUsd, settings.tiers);
+  if (!tier) return { error: 'Закупочная цена вне диапазонов минимальной цены' };
+  const tierMarkup = tier ? convertTierMarkupToKgs(tier, settings.rate) : null;
+  const wholesaleTier = getTierMarkupUsd(buyPriceUsd, settings.wholesaleTiers);
+  if (!wholesaleTier) return { error: 'Закупочная цена вне диапазонов оптовой цены' };
+  const wholesaleTierMarkupUsd = convertTierMarkupToUsd(wholesaleTier, settings.rate);
 
-  const minRaw = settings.markupMode === 'tiers'
-    ? baseKgs + (tierMarkup ?? fallbackMarkup)
-    : settings.markupMode === 'money'
-      ? baseKgs + settings.markup
-      : baseKgs * (1 + settings.markup / 100);
+  const minRaw = baseKgs + tierMarkup;
+  const wholesaleRaw = buyPriceUsd + wholesaleTierMarkupUsd;
   const minPrice = roundBy(minRaw, settings.rounding);
-  const price36 = roundBy(minPrice * (1 + settings.bank36 / 100), settings.rounding);
-  const price912 = roundBy(minPrice * (1 + settings.bank912 / 100), settings.rounding);
+  const wholesalePrice = roundMoney(wholesaleRaw);
+  const price36 = settings.calculate36 ? roundBy(minPrice * (1 + settings.bank36 / 100), settings.rounding) : null;
+  const price912 = settings.calculate912 ? roundBy(minPrice * (1 + settings.bank912 / 100), settings.rounding) : null;
 
   return {
     productId: product.id,
+    wholesaleCurrencyHref: getWholesaleCurrencyHref(product),
+    wholesalePrice: Math.max(0, roundMoney(wholesalePrice)),
     minPrice: Math.max(0, roundMoney(minPrice)),
-    price36: Math.max(0, roundMoney(price36)),
-    price912: Math.max(0, roundMoney(price912))
+    price36: price36 === null ? null : Math.max(0, roundMoney(price36)),
+    price912: price912 === null ? null : Math.max(0, roundMoney(price912))
   };
 }
 
-function getFallbackMarkupBySettings(baseKgs, settings) {
-  return settings.fallbackMarkupMode === 'money'
-    ? settings.fallbackMarkup
-    : baseKgs * settings.fallbackMarkup / 100;
+function getWholesaleCurrencyHref(product) {
+  const wholesalePrice = getPriceRecord(product, els.priceTypeWholesaleSelect.value);
+  const wholesaleCurrency = normalizeSearch(`${wholesalePrice?.currencyIsoCode || ''} ${wholesalePrice?.currencyName || ''}`);
+  if (wholesaleCurrency.includes('usd') || wholesaleCurrency.includes('доллар')) {
+    return wholesalePrice?.currencyHref || '';
+  }
+  return getBuyPriceCurrency(product.buyPrice) === 'usd' ? (product.buyPrice?.currencyHref || '') : '';
+}
+
+function convertTierMarkupToKgs(tier, rate) {
+  return normalizeTierCurrency(tier.currency) === 'usd'
+    ? tier.amount * rate
+    : tier.amount;
+}
+
+function convertTierMarkupToUsd(tier, rate) {
+  return normalizeTierCurrency(tier.currency) === 'usd'
+    ? tier.amount
+    : tier.amount / rate;
 }
 
 async function saveChanges() {
+  document.querySelectorAll('[data-price-product]').forEach(syncPriceInput);
   const changes = getSelectedChanges();
   if (!changes.length) return;
   if (changes.length > 200) return setStatus('За один раз можно сохранить не более 200 товаров. Выберите меньше товаров.');
+  if (!els.priceTypeWholesaleSelect.value) return setStatus('Тип цены «Оптовая цена» не найден в МойСклад.');
+  const save36 = changes.some((change) => change.price36 !== null && change.price36 !== undefined);
+  const save912 = changes.some((change) => change.price912 !== null && change.price912 !== undefined);
+  if (save36 && !els.priceType36Select.value) return setStatus('Тип цены 3-6 не найден в МойСклад.');
+  if (save912 && !els.priceType912Select.value) return setStatus('Тип цены 9-12 не найден в МойСклад.');
 
   const name36 = els.priceType36Select.selectedOptions[0]?.textContent || '3-6';
   const name912 = els.priceType912Select.selectedOptions[0]?.textContent || '9-12';
-  if (!confirm(`Сохранить минимальную цену, «${name36}» и «${name912}» у ${changes.length} товаров?`)) return;
+  const nameWholesale = els.priceTypeWholesaleSelect.selectedOptions[0]?.textContent || 'Оптовая цена';
+  const priceNames = ['минимальную цену', `«${nameWholesale}»`];
+  if (save36) priceNames.push(`«${name36}»`);
+  if (save912) priceNames.push(`«${name912}»`);
+  if (!confirm(`Сохранить ${priceNames.join(', ')} у ${changes.length} товаров?`)) return;
 
   els.saveButton.disabled = true;
   els.catalogStatus.textContent = `Сохраняю цены: ${changes.length} товаров...`;
@@ -917,8 +1008,9 @@ async function saveChanges() {
     const result = await api('/api/accounting/prices/formula-update', {
       method: 'POST',
       body: {
-        priceType36Href: els.priceType36Select.value,
-        priceType912Href: els.priceType912Select.value,
+        priceType36Href: save36 ? els.priceType36Select.value : '',
+        priceType912Href: save912 ? els.priceType912Select.value : '',
+        priceTypeWholesaleHref: els.priceTypeWholesaleSelect.value,
         changes
       }
     });
@@ -940,8 +1032,12 @@ function getSelectedChanges() {
 }
 
 function getPrice(product, priceTypeHref) {
-  const price = (product.prices || []).find((item) => item.priceTypeHref === priceTypeHref);
+  const price = getPriceRecord(product, priceTypeHref);
   return roundMoney(Number(price?.value || 0));
+}
+
+function getPriceRecord(product, priceTypeHref) {
+  return (product.prices || []).find((item) => item.priceTypeHref === priceTypeHref) || null;
 }
 
 function setStatus(message) { els.catalogStatus.textContent = message; }
@@ -984,7 +1080,10 @@ function resetPageAndRender() {
 function changePage(offset) { state.page += offset; render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function normalizeSearch(value) { return String(value || '').trim().toLocaleLowerCase('ru-RU'); }
 function roundMoney(value) { return Math.round((Number(value) + Number.EPSILON) * 100) / 100; }
-function roundBy(value, rounding) { return rounding > 0 ? Math.round(value / rounding) * rounding : value; }
+function roundBy(value, rounding) {
+  const step = Number(rounding || 0);
+  return step > 0 ? roundMoney(Math.round(value / step) * step) : value;
+}
 function formatNumber(value) { return new Intl.NumberFormat('ru-RU').format(Number(value || 0)); }
 function formatSom(value) { return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} сом`; }
 
@@ -995,43 +1094,67 @@ function formatBuyPrice(buyPrice) {
   return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)} ${escapeHtml(currency)}`.trim();
 }
 
-function isUsdBuyPrice(buyPrice) {
+function formatWholesale(value, product, priceTypeHref) {
+  const price = getPriceRecord(product, priceTypeHref);
+  const currency = price?.currencyIsoCode || price?.currencyName || product.buyPrice?.currencyIsoCode || product.buyPrice?.currencyName || 'USD';
+  if (Number(value || 0) <= 0) return '<span class="muted">0,00</span>';
+  return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} ${escapeHtml(currency)}`.trim();
+}
+
+function getBuyPriceCurrency(buyPrice) {
   const currency = normalizeSearch(`${buyPrice?.currencyIsoCode || ''} ${buyPrice?.currencyName || ''}`);
-  return !currency || currency.includes('usd') || currency.includes('доллар');
+  if (!currency || currency.includes('usd') || currency.includes('доллар')) return 'usd';
+  if (currency.includes('kgs') || currency.includes('сом')) return 'kgs';
+  return 'unknown';
 }
 
 function loadSettings() {
   try {
     const settings = {
       usdRate: 89,
-      markupPercent: 20,
-      markupMode: 'percent',
+      markupPercent: 0,
+      markupMode: 'tiers',
       tiers: getDefaultTiers(),
-      fallbackMarkupMode: 'percent',
-      fallbackMarkup: 20,
+      wholesaleTiers: getDefaultTiers(),
+      fallbackMarkupMode: 'none',
+      fallbackMarkup: 0,
+      wholesaleFallbackMarkupMode: 'none',
+      wholesaleFallbackMarkup: 0,
       bank36Percent: 10,
       bank912Percent: 20,
+      calculate36: true,
+      calculate912: true,
       rounding: 10,
       ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
     };
     els.usdRateInput.value = String(settings.usdRate);
-    els.markupInput.value = String(settings.markupPercent);
-    els.markupModeSelect.value = String(settings.markupMode || 'percent');
+    els.markupInput.value = '0';
+    els.markupModeSelect.value = 'tiers';
     renderTierRows(normalizeTiers(settings.tiers));
-    els.fallbackMarkupModeSelect.value = String(settings.fallbackMarkupMode || 'percent');
-    els.fallbackMarkupInput.value = String(settings.fallbackMarkup ?? settings.markupPercent ?? 20);
+    renderWholesaleTierRows(normalizeTiers(settings.wholesaleTiers || settings.tiers));
+    els.fallbackMarkupModeSelect.value = 'none';
+    els.fallbackMarkupInput.value = '0';
+    els.wholesaleFallbackMarkupModeSelect.value = 'none';
+    els.wholesaleFallbackMarkupInput.value = '0';
     els.bank36Input.value = String(settings.bank36Percent);
     els.bank912Input.value = String(settings.bank912Percent);
+    els.calculate36Input.checked = settings.calculate36 !== false;
+    els.calculate912Input.checked = settings.calculate912 !== false;
     els.roundingSelect.value = String(settings.rounding);
   } catch {
     els.usdRateInput.value = '89';
-    els.markupInput.value = '20';
-    els.markupModeSelect.value = 'percent';
+    els.markupInput.value = '0';
+    els.markupModeSelect.value = 'tiers';
     renderTierRows(getDefaultTiers());
-    els.fallbackMarkupModeSelect.value = 'percent';
-    els.fallbackMarkupInput.value = '20';
+    renderWholesaleTierRows(getDefaultTiers());
+    els.fallbackMarkupModeSelect.value = 'none';
+    els.fallbackMarkupInput.value = '0';
+    els.wholesaleFallbackMarkupModeSelect.value = 'none';
+    els.wholesaleFallbackMarkupInput.value = '0';
     els.bank36Input.value = '10';
     els.bank912Input.value = '20';
+    els.calculate36Input.checked = true;
+    els.calculate912Input.checked = true;
     els.roundingSelect.value = '10';
   }
 }
@@ -1039,13 +1162,18 @@ function loadSettings() {
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({
     usdRate: Number(els.usdRateInput.value || 0),
-    markupPercent: Number(els.markupInput.value || 0),
-    markupMode: els.markupModeSelect.value,
+    markupPercent: 0,
+    markupMode: 'tiers',
     tiers: getTierSettings(),
-    fallbackMarkupMode: els.fallbackMarkupModeSelect.value,
-    fallbackMarkup: Number(els.fallbackMarkupInput.value || 0),
+    wholesaleTiers: getWholesaleTierSettings(),
+    fallbackMarkupMode: 'none',
+    fallbackMarkup: 0,
+    wholesaleFallbackMarkupMode: 'none',
+    wholesaleFallbackMarkup: 0,
     bank36Percent: Number(els.bank36Input.value || 0),
     bank912Percent: Number(els.bank912Input.value || 0),
+    calculate36: els.calculate36Input.checked,
+    calculate912: els.calculate912Input.checked,
     rounding: Number(els.roundingSelect.value || 0)
   }));
 }
@@ -1057,7 +1185,10 @@ async function api(url, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Ошибка запроса');
+  if (!response.ok) {
+    const detail = data.details?.errors?.[0]?.error || data.details?.error || '';
+    throw new Error(detail || data.error || 'Ошибка запроса');
+  }
   return data;
 }
 

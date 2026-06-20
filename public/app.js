@@ -156,7 +156,7 @@ async function enterCrm(user) {
   crmLoginScreen.classList.add('hidden');
   const requestedPage = getRequestedPage();
   if (!['admin', 'owner', 'employee'].includes(user.role)) {
-    window.location.href = requestedPage || (user.role === 'accountant' ? '/prices.html' : '/report.html');
+    window.location.href = requestedPage || '/report.html';
     return;
   }
   if (requestedPage && requestedPage !== '/' && requestedPage !== '/sales.html') {

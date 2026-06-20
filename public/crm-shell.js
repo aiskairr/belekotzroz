@@ -8,7 +8,6 @@ const roleLabels = {
 const navigation = [
   { id: 'sales', href: '/sales.html', label: 'Продажи', roles: ['admin', 'owner', 'employee'] },
   { id: 'reports', href: '/report.html', label: 'Отчетность', roles: ['admin', 'owner', 'accountant', 'employee'] },
-  { id: 'prices', href: '/prices.html', label: 'Бухгалтерия', roles: ['admin', 'owner', 'accountant'] },
   { id: 'priceFormula', href: '/price-formula.html', label: 'Расчет цен', roles: ['admin', 'owner', 'accountant'] },
   { id: 'audit', href: '/audit.html', label: 'Журнал действий', roles: ['admin', 'owner'] },
   { id: 'about', href: '/about.html', label: 'О системе', roles: ['admin', 'owner', 'accountant', 'employee'] }
@@ -178,7 +177,7 @@ function syncSharedSettingsControls() {
 }
 
 function getDefaultPage(role) {
-  if (role === 'accountant') return '/prices.html';
+  if (role === 'accountant') return '/report.html';
   return '/sales.html';
 }
 

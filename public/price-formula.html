@@ -16,7 +16,6 @@
             <h1>Расчет цен</h1>
             <p>Закупочная цена в USD переводится в сомы, формирует минимальную цену, а цены 3-6 и 9-12 считаются от минимальной.</p>
           </div>
-          <a class="back-link" href="/prices.html">Открыть массовое редактирование</a>
         </header>
 
         <section class="template-card">
@@ -42,44 +41,82 @@
           <p id="groupTemplateStatus" class="template-status">Выберите группу, чтобы создать или применить шаблон.</p>
         </section>
 
+        <div class="technical-price-fields hidden" aria-hidden="true">
+          <select id="priceType36Select"></select>
+          <select id="priceType912Select"></select>
+          <select id="priceTypeWholesaleSelect"></select>
+          <input id="markupInput" type="hidden" value="0">
+          <select id="markupModeSelect">
+            <option value="tiers" selected>Диапазоны USD</option>
+          </select>
+        </div>
+
+        <section class="tier-card">
+          <div class="tier-title">
+            <div>
+              <p class="eyebrow">Диапазоны</p>
+              <h2>Минимальная цена</h2>
+              <p>Если закупка попадает в диапазон USD, к цене в сомах добавится указанная сумма.</p>
+            </div>
+            <button id="addTierButton" class="secondary" type="button">Добавить диапазон</button>
+          </div>
+          <div class="tier-table">
+            <div class="tier-head">
+              <span>От USD</span>
+              <span>До USD</span>
+              <span>Наценка</span>
+              <span>Валюта</span>
+              <span></span>
+            </div>
+            <div id="tierRows"></div>
+          </div>
+          <input id="fallbackMarkupModeSelect" type="hidden" value="none">
+          <input id="fallbackMarkupInput" type="hidden" value="0">
+        </section>
+
+        <section class="tier-card">
+          <div class="tier-title">
+            <div>
+              <p class="eyebrow">Оптовая цена</p>
+              <h2>Наценка по закупочной цене</h2>
+              <p>Оптовая цена считается по своим диапазонам и сохраняется в тип цены «Оптовая цена».</p>
+            </div>
+            <button id="addWholesaleTierButton" class="secondary" type="button">Добавить диапазон</button>
+          </div>
+          <div class="tier-table">
+            <div class="tier-head">
+              <span>От USD</span>
+              <span>До USD</span>
+              <span>Наценка</span>
+              <span>Валюта</span>
+              <span></span>
+            </div>
+            <div id="wholesaleTierRows"></div>
+          </div>
+          <input id="wholesaleFallbackMarkupModeSelect" type="hidden" value="none">
+          <input id="wholesaleFallbackMarkupInput" type="hidden" value="0">
+        </section>
+
         <section class="formula-card">
           <div class="formula-controls formula-controls-wide">
-            <label>
-              <span>Тип цены 3-6</span>
-              <select id="priceType36Select"></select>
-            </label>
-            <label>
-              <span>Тип цены 9-12</span>
-              <select id="priceType912Select"></select>
-            </label>
             <label>
               <span>Курс USD -> KGS</span>
               <input id="usdRateInput" type="number" min="0" step="0.01" value="89">
             </label>
             <label>
-              <span>Наценка минимума</span>
-              <input id="markupInput" type="number" min="0" step="0.01" value="20">
-            </label>
-            <label>
-              <span>Тип наценки</span>
-              <select id="markupModeSelect">
-                <option value="percent">Процент</option>
-                <option value="money">Сомы</option>
-                <option value="tiers">Диапазоны USD</option>
-              </select>
-            </label>
-            <label>
-              <span>Банк 3-6, %</span>
+              <span><input id="calculate36Input" type="checkbox" checked> Считать 3-6</span>
               <input id="bank36Input" type="number" min="0" step="0.01" value="10">
             </label>
             <label>
-              <span>Банк 9-12, %</span>
+              <span><input id="calculate912Input" type="checkbox" checked> Считать 9-12</span>
               <input id="bank912Input" type="number" min="0" step="0.01" value="20">
             </label>
             <label>
               <span>Округление</span>
               <select id="roundingSelect">
                 <option value="0">Не округлять</option>
+                <option value="0.1">До 0,1 сома</option>
+                <option value="0.5">До 0,5 сома</option>
                 <option value="1">До 1 сома</option>
                 <option value="10" selected>До 10 сом</option>
                 <option value="100">До 100 сом</option>
@@ -101,39 +138,6 @@
           <button id="selectFolderButton" class="secondary" type="button">Выбрать группу</button>
           <button id="reloadButton" class="secondary" type="button">Обновить каталог</button>
           <button id="calculateButton" type="button">Рассчитать выбранные</button>
-        </section>
-
-        <section id="tierCard" class="tier-card hidden">
-          <div class="tier-title">
-            <div>
-              <p class="eyebrow">Диапазоны</p>
-              <h2>Наценка по закупочной цене</h2>
-              <p>Если закупка попадает в диапазон USD, к цене в сомах добавится указанная сумма.</p>
-            </div>
-            <button id="addTierButton" class="secondary" type="button">Добавить диапазон</button>
-          </div>
-          <div class="tier-table">
-            <div class="tier-head">
-              <span>От USD</span>
-              <span>До USD</span>
-              <span>Наценка, сом</span>
-              <span></span>
-            </div>
-            <div id="tierRows"></div>
-          </div>
-          <div class="fallback-row">
-            <label>
-              <span>Если товар вне диапазонов</span>
-              <select id="fallbackMarkupModeSelect">
-                <option value="percent">Наценить процентом</option>
-                <option value="money">Добавить сумму</option>
-              </select>
-            </label>
-            <label>
-              <span>Запасная наценка</span>
-              <input id="fallbackMarkupInput" type="number" min="0" step="0.01" value="20">
-            </label>
-          </div>
         </section>
 
         <section class="summary-grid">
@@ -160,6 +164,8 @@
                   <th>Наименование</th>
                   <th>Шаблон группы</th>
                   <th>Закупка</th>
+                  <th>Опт. сейчас</th>
+                  <th>Опт. новая, USD</th>
                   <th>Мин. сейчас</th>
                   <th>Мин. новая</th>
                   <th>3-6 сейчас</th>
@@ -179,6 +185,6 @@
         </section>
       </section>
     </main>
-    <script src="/price-formula.js?v=20260618-supply-template" type="module"></script>
+    <script src="/price-formula.js?v=20260619-save-exact" type="module"></script>
   </body>
 </html>

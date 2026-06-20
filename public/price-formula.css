@@ -141,7 +141,7 @@ h1, h2, p { margin: 0; }
 .tier-head,
 .tier-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(150px, 1fr) auto;
+  grid-template-columns: minmax(110px, 1fr) minmax(110px, 1fr) minmax(130px, 1fr) minmax(96px, .55fr) auto;
   gap: 10px;
   align-items: center;
 }
@@ -188,7 +188,7 @@ td:nth-child(2) { width: 120px; color: #647184; }
 td:nth-child(4) {
   min-width: 220px;
 }
-td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8), td:nth-child(9), td:nth-child(10), td:nth-child(11) {
+td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8), td:nth-child(9), td:nth-child(10), td:nth-child(11), td:nth-child(12), td:nth-child(13) {
   width: 145px;
   text-align: right;
   white-space: nowrap;
@@ -209,6 +209,7 @@ td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8), td:nth-child
   line-height: 1.25;
 }
 .price-input { min-width: 132px; text-align: right; }
+.price-currency { margin-left: 6px; color: #64748b; font-weight: 700; white-space: nowrap; }
 .delta-up { color: #16734f; font-weight: 850; }
 .delta-down { color: #b42318; font-weight: 850; }
 .muted { color: #7b8794; }

@@ -1111,7 +1111,9 @@ async function getAccountingPriceCatalog(options = {}) {
         value: roundMoney(Number(price.value || 0) / 100),
         priceTypeHref: price.priceType?.meta?.href || '',
         priceTypeName: price.priceType?.name || '',
-        currencyHref: price.currency?.meta?.href || ''
+        currencyHref: price.currency?.meta?.href || '',
+        currencyIsoCode: price.currency?.isoCode || '',
+        currencyName: price.currency?.name || price.currency?.fullName || ''
       }))
     }))
   };
@@ -1374,21 +1376,29 @@ function normalizePriceFormulaTemplate(template, folder = {}) {
   const id = String(template.id || folder.meta?.href || folder.id || randomUUID());
   const name = String(template.name || folder.name || 'Шаблон группы').trim();
   const tiers = Array.isArray(template.tiers) ? template.tiers : [];
+  const wholesaleTiers = Array.isArray(template.wholesaleTiers) ? template.wholesaleTiers : tiers;
+  const normalizeTiers = (items) => items.map((tier) => ({
+    from: tier.from ?? '',
+    to: tier.to ?? '',
+    amount: tier.amount ?? '',
+    currency: String(tier.currency || 'kgs').toLowerCase() === 'usd' ? 'usd' : 'kgs'
+  }));
   return {
     id,
     name,
     usdRate: toFiniteNumber(template.usdRate, 89),
-    markup: toFiniteNumber(template.markup, 20),
-    markupMode: ['percent', 'money', 'tiers'].includes(template.markupMode) ? template.markupMode : 'percent',
-    tiers: tiers.map((tier) => ({
-      from: tier.from ?? '',
-      to: tier.to ?? '',
-      amount: tier.amount ?? ''
-    })),
-    fallbackMarkupMode: ['percent', 'money'].includes(template.fallbackMarkupMode) ? template.fallbackMarkupMode : 'percent',
-    fallbackMarkup: toFiniteNumber(template.fallbackMarkup, toFiniteNumber(template.markup, 20)),
+    markup: 0,
+    markupMode: 'tiers',
+    tiers: normalizeTiers(tiers),
+    wholesaleTiers: normalizeTiers(wholesaleTiers),
+    fallbackMarkupMode: 'none',
+    fallbackMarkup: 0,
+    wholesaleFallbackMarkupMode: 'none',
+    wholesaleFallbackMarkup: 0,
     bank36: toFiniteNumber(template.bank36, 10),
     bank912: toFiniteNumber(template.bank912, 20),
+    calculate36: template.calculate36 !== false,
+    calculate912: template.calculate912 !== false,
     rounding: toFiniteNumber(template.rounding, 10)
   };
 }
@@ -1531,41 +1541,54 @@ async function updateAccountingFormulaPrices(input) {
   const changes = Array.isArray(input.changes) ? input.changes : [];
   const priceType36Href = String(input.priceType36Href || '').trim();
   const priceType912Href = String(input.priceType912Href || '').trim();
+  const priceTypeWholesaleHref = String(input.priceTypeWholesaleHref || '').trim();
   if (!changes.length) throw httpError(400, 'Нет цен для сохранения.');
   if (changes.length > 200) throw httpError(400, 'За один раз можно изменить не более 200 товаров.');
+  const shouldSave36 = Boolean(priceType36Href);
+  const shouldSave912 = Boolean(priceType912Href);
 
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const priceTypes = await getMoySkladPriceTypes(token);
-  const priceType36 = priceTypes.find((item) => item.href === priceType36Href);
-  const priceType912 = priceTypes.find((item) => item.href === priceType912Href);
-  if (!priceType36) throw httpError(400, 'Тип цены 3-6 не найден в МойСклад.');
-  if (!priceType912) throw httpError(400, 'Тип цены 9-12 не найден в МойСклад.');
+  const priceType36 = shouldSave36 ? priceTypes.find((item) => item.href === priceType36Href) : null;
+  const priceType912 = shouldSave912 ? priceTypes.find((item) => item.href === priceType912Href) : null;
+  const priceTypeWholesale = priceTypes.find((item) => item.href === priceTypeWholesaleHref);
+  if (shouldSave36 && !priceType36) throw httpError(400, 'Тип цены 3-6 не найден в МойСклад.');
+  if (shouldSave912 && !priceType912) throw httpError(400, 'Тип цены 9-12 не найден в МойСклад.');
+  if (!priceTypeWholesale) throw httpError(400, 'Тип цены «Оптовая цена» не найден в МойСклад.');
+  const defaultUsdCurrency = await getMoySkladCurrencyByIsoCode(token, 'USD').catch(() => null);
 
   const normalized = changes.map((change) => {
     const productId = String(change.productId || '').trim();
+    const wholesaleCurrencyHref = String(change.wholesaleCurrencyHref || '').trim();
+    const wholesalePrice = toMoney(change.wholesalePrice);
     const minPrice = toMoney(change.minPrice);
-    const price36 = toMoney(change.price36);
-    const price912 = toMoney(change.price912);
+    const price36 = change.price36 === null || change.price36 === undefined ? null : toMoney(change.price36);
+    const price912 = change.price912 === null || change.price912 === undefined ? null : toMoney(change.price912);
     if (!/^[0-9a-f-]{36}$/i.test(productId)) throw httpError(400, 'Некорректный идентификатор товара.');
-    for (const value of [minPrice, price36, price912]) {
+    if (wholesaleCurrencyHref && !getMoySkladEntityIdFromInput(wholesaleCurrencyHref)) {
+      throw httpError(400, 'Некорректная валюта оптовой цены.');
+    }
+    for (const value of [wholesalePrice, minPrice, price36, price912].filter((item) => item !== null)) {
       if (!Number.isFinite(value) || value < 0 || value > 1000000000) {
         throw httpError(400, 'Цена должна быть от 0 до 1 000 000 000.');
       }
     }
     return {
       productId,
+      wholesaleCurrencyHref,
+      wholesalePrice: roundMoney(wholesalePrice),
       minPrice: roundMoney(minPrice),
-      price36: roundMoney(price36),
-      price912: roundMoney(price912)
+      price36: price36 === null ? null : roundMoney(price36),
+      price912: price912 === null ? null : roundMoney(price912)
     };
   });
 
   const results = await mapWithConcurrency(normalized, 5, async (change) => {
     try {
-      await updateMoySkladProductFormulaPrices(token, change, priceType36, priceType912);
-      return { productId: change.productId, minPrice: change.minPrice, price36: change.price36, price912: change.price912, ok: true };
+      await updateMoySkladProductFormulaPrices(token, change, priceType36, priceType912, priceTypeWholesale, defaultUsdCurrency);
+      return { productId: change.productId, wholesalePrice: change.wholesalePrice, minPrice: change.minPrice, price36: change.price36, price912: change.price912, ok: true };
     } catch (error) {
-      return { productId: change.productId, minPrice: change.minPrice, price36: change.price36, price912: change.price912, ok: false, error: error.message };
+      return { productId: change.productId, wholesalePrice: change.wholesalePrice, minPrice: change.minPrice, price36: change.price36, price912: change.price912, ok: false, error: error.message };
     }
   });
 
@@ -1576,7 +1599,7 @@ async function updateAccountingFormulaPrices(input) {
   };
 }
 
-async function updateMoySkladProductFormulaPrices(token, change, priceType36, priceType912) {
+async function updateMoySkladProductFormulaPrices(token, change, priceType36, priceType912, priceTypeWholesale, defaultUsdCurrency) {
   const productUrl = `${MOYSKLAD_BASE_URL}/entity/product/${change.productId}`;
   const currentResponse = await moySkladFetch(productUrl, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
@@ -1587,13 +1610,28 @@ async function updateMoySkladProductFormulaPrices(token, change, priceType36, pr
   }
 
   const salePrices = Array.isArray(product.salePrices) ? [...product.salePrices] : [];
-  const currency = findKgsPriceCurrency(product, salePrices, [priceType36.href, priceType912.href]);
-  if (!currency?.meta?.href) {
+  const preferredPriceTypeHrefs = [priceType36?.href, priceType912?.href].filter(Boolean);
+  const kgsCurrency = findKgsPriceCurrency(product, salePrices, preferredPriceTypeHrefs);
+  if (!kgsCurrency?.meta?.href) {
     throw httpError(400, `У товара «${product.name || change.productId}» не найдена валюта KGS для цен.`);
   }
+  const requestedUsdCurrency = change.wholesaleCurrencyHref
+    ? meta(change.wholesaleCurrencyHref, 'currency')
+    : null;
+  const usdCurrency = requestedUsdCurrency
+    || findUsdPriceCurrency(product, salePrices, priceTypeWholesale.href)
+    || defaultUsdCurrency;
+  if (!usdCurrency?.meta?.href) {
+    throw httpError(400, `У товара «${product.name || change.productId}» не найдена валюта USD для оптовой цены.`);
+  }
 
-  upsertSalePrice(salePrices, priceType36, change.price36, currency);
-  upsertSalePrice(salePrices, priceType912, change.price912, currency);
+  upsertSalePrice(salePrices, priceTypeWholesale, change.wholesalePrice, usdCurrency);
+  if (priceType36 && change.price36 !== null && change.price36 !== undefined) {
+    upsertSalePrice(salePrices, priceType36, change.price36, kgsCurrency);
+  }
+  if (priceType912 && change.price912 !== null && change.price912 !== undefined) {
+    upsertSalePrice(salePrices, priceType912, change.price912, kgsCurrency);
+  }
 
   const updateResponse = await moySkladFetch(productUrl, {
     method: 'PUT',
@@ -1603,13 +1641,20 @@ async function updateMoySkladProductFormulaPrices(token, change, priceType36, pr
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      minPrice: { value: toMoySkladPrice(change.minPrice), currency },
+      minPrice: { value: toMoySkladPrice(change.minPrice), currency: kgsCurrency },
       salePrices
     })
   });
   const updated = await updateResponse.json().catch(() => null);
   if (!updateResponse.ok) {
     throw httpError(updateResponse.status, `Не удалось обновить цены товара «${product.name || change.productId}».`, updated);
+  }
+  const savedWholesale = (updated?.salePrices || []).find((price) =>
+    price.priceType?.meta?.href === priceTypeWholesale.href
+  );
+  const savedWholesaleValue = savedWholesale ? fromMoySkladPrice(savedWholesale.value) : null;
+  if (savedWholesaleValue === null || Math.abs(savedWholesaleValue - change.wholesalePrice) > 0.001) {
+    throw httpError(409, `МойСклад не подтвердил оптовую цену ${change.wholesalePrice} USD для товара «${product.name || change.productId}».`);
   }
 }
 
@@ -1619,9 +1664,10 @@ function upsertSalePrice(salePrices, priceType, value, currency) {
     currency,
     priceType: meta(priceType.href, 'pricetype')
   };
-  const index = salePrices.findIndex((price) => price.priceType?.meta?.href === priceType.href);
-  if (index >= 0) salePrices[index] = nextPrice;
-  else salePrices.push(nextPrice);
+  for (let index = salePrices.length - 1; index >= 0; index -= 1) {
+    if (salePrices[index].priceType?.meta?.href === priceType.href) salePrices.splice(index, 1);
+  }
+  salePrices.push(nextPrice);
 }
 
 function findKgsPriceCurrency(product, salePrices, preferredPriceTypeHrefs = []) {
@@ -1633,6 +1679,27 @@ function findKgsPriceCurrency(product, salePrices, preferredPriceTypeHrefs = [])
   return salePrices.find((price) => isKgsCurrency(price.currency))?.currency
     || product.minPrice?.currency
     || salePrices.find((price) => price.currency)?.currency;
+}
+
+function findUsdPriceCurrency(product, salePrices, wholesalePriceTypeHref) {
+  const wholesaleCurrency = salePrices.find((price) =>
+    price.priceType?.meta?.href === wholesalePriceTypeHref && isUsdCurrency(price.currency)
+  )?.currency;
+  if (wholesaleCurrency) return wholesaleCurrency;
+  if (isUsdCurrency(product.buyPrice?.currency)) return product.buyPrice.currency;
+  return salePrices.find((price) => isUsdCurrency(price.currency))?.currency || null;
+}
+
+async function getMoySkladCurrencyByIsoCode(token, isoCode) {
+  const params = new URLSearchParams({ limit: '100' });
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/currency?${params}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw httpError(response.status, `Не удалось загрузить валюту ${isoCode} из МойСклад.`, data);
+  return (data?.rows || []).find((currency) =>
+    String(currency.isoCode || '').toUpperCase() === String(isoCode || '').toUpperCase()
+  ) || null;
 }
 
 function isKgsCurrency(currency) {
