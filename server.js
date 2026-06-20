@@ -62,6 +62,57 @@ const reportCookieName = 'mysrs_report_session';
 const crmCookieName = 'mysrs_crm_session';
 const PRICE_FORMULA_TEMPLATE_START = '[ORDO_PRICE_TEMPLATE]';
 const PRICE_FORMULA_TEMPLATE_END = '[/ORDO_PRICE_TEMPLATE]';
+const PAYROLL_CONFIG_START = '[ORDO_PAYROLL]';
+const PAYROLL_CONFIG_END = '[/ORDO_PAYROLL]';
+const categorySaleBonusRules = [
+  { name: 'Встраиваемые варочные панели', amount: 300, match: /встраиваем.*вароч|варочн.*панел/ },
+  { name: 'Встраиваемые духовые шкафы', amount: 400, match: /встраиваем.*духов|духов.*шкаф/ },
+  { name: 'Встраиваемые микроволновые печи', amount: 300, match: /встраиваем.*микровол/ },
+  { name: 'Встраиваемые посудомоечные машины', amount: 500, match: /встраиваем.*посудомо/ },
+  { name: 'Встраиваемые холодильники', amount: 500, match: /встраиваем.*холодиль/ },
+  { name: 'Кухонные вытяжки', amount: 300, match: /кухонн.*вытяж|вытяжк/ },
+  { name: 'Настольные плиты', amount: 200, match: /настольн.*плит/ },
+  { name: 'Газовые и электрические плиты', amount: 400, match: /газов.*плит|электрическ.*плит/ },
+  { name: 'Морозильники', amount: 500, match: /морозиль/ },
+  { name: 'Посудомоечные машины', amount: 500, match: /посудомо/ },
+  { name: 'Холодильники', amount: 500, match: /холодиль/ },
+  { name: 'Аэрогрили', amount: 200, match: /аэрогрил/ },
+  { name: 'Блендеры и чопперы', amount: 200, match: /блендер|чоппер/ },
+  { name: 'Вафельницы', amount: 200, match: /вафельниц/ },
+  { name: 'Духовые мини-печи', amount: 300, match: /мини.*печ|духов.*мини/ },
+  { name: 'Кофемашины и кофемолки', amount: 200, match: /кофемаш|кофемол/ },
+  { name: 'Микроволновые печи', amount: 300, match: /микровол/ },
+  { name: 'Миксеры', amount: 200, match: /миксер/ },
+  { name: 'Мультиварки', amount: 300, match: /мультиварк/ },
+  { name: 'Мясорубки', amount: 300, match: /мясоруб/ },
+  { name: 'Посуда', amount: 200, match: /посуда|кастрюл|сковород/ },
+  { name: 'Соковыжималки', amount: 200, match: /соковыжим/ },
+  { name: 'Хлебопечи', amount: 200, match: /хлебопеч/ },
+  { name: 'Электрические чайники и термопоты', amount: 200, match: /чайник|термопот/ },
+  { name: 'Гладильные доски', amount: 150, match: /гладильн.*доск/ },
+  { name: 'Отпариватели', amount: 200, match: /отпарив/ },
+  { name: 'Полуавтоматические стиральные машины', amount: 300, match: /полуавтомат.*стирал/ },
+  { name: 'Пылесосы', amount: 300, match: /пылесос/ },
+  { name: 'Стиральные машины', amount: 500, match: /стиральн.*маш/ },
+  { name: 'Сушилки для белья', amount: 150, match: /сушилк.*бель/ },
+  { name: 'Сушильные машины', amount: 500, match: /сушильн.*маш/ },
+  { name: 'Утюги', amount: 200, match: /утюг/ },
+  { name: 'Вентиляторы', amount: 200, match: /вентилятор/ },
+  { name: 'Водонагреватели', amount: 300, match: /водонагрев/ },
+  { name: 'Кондиционеры', amount: 500, match: /кондиционер/ },
+  { name: 'Обогреватели', amount: 200, match: /обогрев/ },
+  { name: 'Очистители воздуха', amount: 200, match: /очистител.*возду/ },
+  { name: 'Увлажнители', amount: 200, match: /увлажнител/ },
+  { name: 'Аудиотехника', amount: 300, match: /аудиотех|аудиосистем|колонк/ },
+  { name: 'Кронштейны', amount: 50, match: /кронштейн/ },
+  { name: 'Телевизоры', amount: 500, match: /телевизор/ },
+  { name: 'Весы', amount: 200, match: /весы/ },
+  { name: 'Массажеры', amount: 200, match: /массаж/ },
+  { name: 'Плойки и утюжки для волос', amount: 200, match: /плойк|утюж.*волос/ },
+  { name: 'Триммеры и машинки для волос', amount: 200, match: /триммер|машинк.*волос/ },
+  { name: 'Фены', amount: 200, match: /фен/ },
+  { name: 'Электрические зубные щетки', amount: 200, match: /зубн.*щет/ }
+];
 
 const server = createServer(async (req, res) => {
   try {
@@ -116,6 +167,33 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/employees') {
       requireCrmRole(req, ['admin', 'owner', 'employee']);
       const employees = await getMoySkladEmployees();
+      sendJson(res, 200, { employees });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/payroll') {
+      requireCrmRole(req, ['admin', 'owner']);
+      const payroll = await getPayrollReport({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || ''
+      });
+      sendJson(res, 200, payroll);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/payroll/employees/config') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const body = await readJson(req);
+      const entries = Array.isArray(body.employees) ? body.employees : [body];
+      if (!entries.length || entries.length > 100) throw httpError(400, 'Можно сохранить от 1 до 100 сотрудников.');
+      const employees = await mapWithConcurrency(entries, 3, updateMoySkladEmployeePayrollConfig);
+      await writeAudit({
+        user,
+        action: 'payroll.employees.config',
+        entity: 'employee',
+        description: `Настройки зарплаты сохранены: ${employees.length} сотрудников`,
+        details: { employees: employees.map((employee) => employee.name) }
+      });
       sendJson(res, 200, { employees });
       return;
     }
@@ -1082,11 +1160,13 @@ async function getAccountingPriceCatalog(options = {}) {
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const offset = Math.max(0, Number.parseInt(options.offset, 10) || 0);
   const limit = Math.min(500, Math.max(1, Number.parseInt(options.limit, 10) || 500));
-  const [productPage, priceTypes, folders] = await Promise.all([
+  const [productPage, priceTypes, folders, currencies] = await Promise.all([
     loadMoySkladProductPage(token, offset, limit),
     options.includePriceTypes ? getMoySkladPriceTypes(token) : Promise.resolve([]),
-    options.includePriceTypes ? getMoySkladProductFolders(token).catch(() => []) : Promise.resolve([])
+    options.includePriceTypes ? getMoySkladProductFolders(token).catch(() => []) : Promise.resolve([]),
+    getMoySkladCurrencies(token).catch(() => [])
   ]);
+  const currenciesByHref = new Map(currencies.map((currency) => [currency.meta?.href, currency]));
 
   return {
     priceTypes,
@@ -1105,15 +1185,15 @@ async function getAccountingPriceCatalog(options = {}) {
       type: product.meta?.type || 'product',
       archived: Boolean(product.archived),
       folder: getAccountingProductFolder(product),
-      buyPrice: getAccountingBuyPrice(product),
-      minPrice: getAccountingMinPrice(product),
+      buyPrice: getAccountingBuyPrice(product, currenciesByHref),
+      minPrice: getAccountingMinPrice(product, currenciesByHref),
       prices: (product.salePrices || []).map((price) => ({
         value: roundMoney(Number(price.value || 0) / 100),
         priceTypeHref: price.priceType?.meta?.href || '',
         priceTypeName: price.priceType?.name || '',
         currencyHref: price.currency?.meta?.href || '',
-        currencyIsoCode: price.currency?.isoCode || '',
-        currencyName: price.currency?.name || price.currency?.fullName || ''
+        currencyIsoCode: resolveAccountingCurrency(price.currency, currenciesByHref).isoCode || '',
+        currencyName: resolveAccountingCurrency(price.currency, currenciesByHref).name || resolveAccountingCurrency(price.currency, currenciesByHref).fullName || ''
       }))
     }))
   };
@@ -1223,24 +1303,30 @@ function getMoySkladEntityIdFromInput(value) {
   return String(value || '').match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0] || '';
 }
 
-function getAccountingBuyPrice(product) {
+function resolveAccountingCurrency(currency, currenciesByHref = new Map()) {
+  return currenciesByHref.get(currency?.meta?.href) || currency || {};
+}
+
+function getAccountingBuyPrice(product, currenciesByHref) {
   const buyPrice = product.buyPrice || {};
+  const currency = resolveAccountingCurrency(buyPrice.currency, currenciesByHref);
   const value = Number(buyPrice.value || 0);
   return {
     value: Number.isFinite(value) ? roundMoney(value / 100) : 0,
-    currencyName: buyPrice.currency?.name || '',
-    currencyIsoCode: buyPrice.currency?.isoCode || '',
+    currencyName: currency.name || currency.fullName || '',
+    currencyIsoCode: currency.isoCode || '',
     currencyHref: buyPrice.currency?.meta?.href || ''
   };
 }
 
-function getAccountingMinPrice(product) {
+function getAccountingMinPrice(product, currenciesByHref) {
   const minPrice = product.minPrice || {};
+  const currency = resolveAccountingCurrency(minPrice.currency, currenciesByHref);
   const value = Number(minPrice.value || 0);
   return {
     value: Number.isFinite(value) ? roundMoney(value / 100) : 0,
-    currencyName: minPrice.currency?.name || '',
-    currencyIsoCode: minPrice.currency?.isoCode || '',
+    currencyName: currency.name || currency.fullName || '',
+    currencyIsoCode: currency.isoCode || '',
     currencyHref: minPrice.currency?.meta?.href || ''
   };
 }
@@ -1399,7 +1485,8 @@ function normalizePriceFormulaTemplate(template, folder = {}) {
     bank912: toFiniteNumber(template.bank912, 20),
     calculate36: template.calculate36 !== false,
     calculate912: template.calculate912 !== false,
-    rounding: toFiniteNumber(template.rounding, 10)
+    rounding: toFiniteNumber(template.rounding, 10),
+    wholesaleRounding: toFiniteNumber(template.wholesaleRounding, 0.1)
   };
 }
 
@@ -1691,15 +1778,20 @@ function findUsdPriceCurrency(product, salePrices, wholesalePriceTypeHref) {
 }
 
 async function getMoySkladCurrencyByIsoCode(token, isoCode) {
+  const currencies = await getMoySkladCurrencies(token);
+  return currencies.find((currency) =>
+    String(currency.isoCode || '').toUpperCase() === String(isoCode || '').toUpperCase()
+  ) || null;
+}
+
+async function getMoySkladCurrencies(token) {
   const params = new URLSearchParams({ limit: '100' });
   const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/currency?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
   });
   const data = await response.json().catch(() => null);
-  if (!response.ok) throw httpError(response.status, `Не удалось загрузить валюту ${isoCode} из МойСклад.`, data);
-  return (data?.rows || []).find((currency) =>
-    String(currency.isoCode || '').toUpperCase() === String(isoCode || '').toUpperCase()
-  ) || null;
+  if (!response.ok) throw httpError(response.status, 'Не удалось загрузить валюты из МойСклад.', data);
+  return data?.rows || [];
 }
 
 function isKgsCurrency(currency) {
@@ -2034,10 +2126,13 @@ function mapReportDocument(document) {
     webUrl: getMoySkladWebUrl(documentType, document.id),
     paymentType: getReportPaymentType(document, documentType),
     employeeName: getReportTextAttribute(document, 'EMPLOYEE', documentType),
+    employeeHref: getReportAttributeObjectHref(document, 'EMPLOYEE', documentType),
     products: positions.map((position, index) => ({
       index,
       code: position.assortment?.code || '',
       name: position.assortment?.name || position.name || 'Товар',
+      categoryName: position.assortment?.productFolder?.name || '',
+      categoryPath: position.assortment?.productFolder?.pathName || '',
       quantity: Number(position.quantity || 0),
       price: fromReportDocumentMoney(position.price, moneyRate),
       sum: roundMoney(fromReportDocumentMoney(position.price, moneyRate) * Number(position.quantity || 0))
@@ -2416,6 +2511,11 @@ function getReportNumberAttribute(document, attribute, documentType) {
   return Number.isFinite(number) ? number : null;
 }
 
+function getReportAttributeObjectHref(document, attribute, documentType) {
+  const value = getReportAttributeValue(document, attribute, documentType);
+  return typeof value === 'object' ? String(value.meta?.href || '') : '';
+}
+
 function getReportMoneyFromTextAttribute(document, attribute, documentType) {
   const value = getReportAttributeValue(document, attribute, documentType);
   if (value === undefined || value === null || value === '') {
@@ -2490,9 +2590,216 @@ async function getMoySkladEmployees() {
   }
 
   return (data.rows || []).map((item) => ({
+    id: item.id || getIdFromHref(item.meta?.href || ''),
     name: item.name,
-    href: item.meta.href
+    href: item.meta.href,
+    payroll: parsePayrollConfig(item.description || '')
   }));
+}
+
+async function updateMoySkladEmployeePayrollConfig(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const customEntityId = requiredEnv('MOYSKLAD_EMPLOYEE_CUSTOM_ENTITY_ID');
+  const employeeHref = String(input.employeeHref || '').trim();
+  const expectedPrefix = `${MOYSKLAD_BASE_URL}/entity/customentity/${customEntityId}/`;
+  if (!employeeHref.startsWith(expectedPrefix) || !getMoySkladEntityIdFromInput(employeeHref)) {
+    throw httpError(400, 'Выберите корректного сотрудника.');
+  }
+
+  const currentResponse = await moySkladFetch(employeeHref, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
+  });
+  const current = await currentResponse.json().catch(() => null);
+  if (!currentResponse.ok) {
+    throw httpError(currentResponse.status, 'Не удалось загрузить сотрудника из МойСклад.', current);
+  }
+
+  const payroll = normalizePayrollConfig(input.payroll || {});
+  const description = setMarkedJsonInDescription(
+    current.description || '',
+    PAYROLL_CONFIG_START,
+    PAYROLL_CONFIG_END,
+    payroll
+  );
+  const updateResponse = await moySkladFetch(employeeHref, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ description })
+  });
+  const updated = await updateResponse.json().catch(() => null);
+  if (!updateResponse.ok) {
+    throw httpError(updateResponse.status, `Не удалось сохранить настройки сотрудника «${current.name || ''}».`, updated);
+  }
+
+  return {
+    id: updated?.id || current.id || getIdFromHref(employeeHref),
+    name: updated?.name || current.name || '',
+    href: updated?.meta?.href || employeeHref,
+    payroll: parsePayrollConfig(updated?.description || description)
+  };
+}
+
+function normalizePayrollConfig(input = {}) {
+  const scheme = ['salary', 'percent', 'salary_percent', 'category_bonus', 'salary_category_bonus'].includes(input.scheme)
+    ? input.scheme
+    : 'salary_percent';
+  const percentBase = input.percentBase === 'profit' ? 'profit' : 'revenue';
+  const position = ['manager', 'seller', 'courier', 'cashier', 'warehouse', 'other'].includes(input.position)
+    ? input.position
+    : 'seller';
+  return {
+    enabled: input.enabled !== false,
+    position,
+    customPosition: position === 'other' ? String(input.customPosition || '').trim().slice(0, 80) : '',
+    scheme,
+    monthlySalary: clampPayrollNumber(input.monthlySalary, 0, 10000000),
+    percent: clampPayrollNumber(input.percent, 0, 100),
+    percentBase
+  };
+}
+
+function clampPayrollNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return roundMoney(Math.min(max, Math.max(min, number)));
+}
+
+function parsePayrollConfig(description) {
+  const parsed = parseMarkedJsonFromDescription(description, PAYROLL_CONFIG_START, PAYROLL_CONFIG_END);
+  return normalizePayrollConfig(parsed || { enabled: false, scheme: 'salary_percent' });
+}
+
+async function getPayrollReport(input) {
+  const dateFrom = normalizePayrollDate(input.dateFrom);
+  const dateTo = normalizePayrollDate(input.dateTo);
+  if (dateFrom > dateTo) throw httpError(400, 'Дата начала не может быть позже даты окончания.');
+
+  const [employees, salesReport] = await Promise.all([
+    getMoySkladEmployees(),
+    getSalesReport({ dateFrom, dateTo, retailStoreHref: '', storeHref: '' })
+  ]);
+  const salesByEmployee = new Map();
+  let unassignedDocuments = 0;
+  let unassignedRevenue = 0;
+  for (const row of salesReport.rows || []) {
+    const key = row.employeeHref || normalizeEmployeeKey(row.employeeName);
+    if (!key) {
+      unassignedDocuments += 1;
+      unassignedRevenue = roundMoney(unassignedRevenue + Number(row.amount || 0));
+      continue;
+    }
+    const current = salesByEmployee.get(key) || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0 };
+    current.documents += 1;
+    current.revenue = roundMoney(current.revenue + Number(row.amount || 0));
+    current.profit = roundMoney(current.profit + Number(row.netProfit || 0));
+    current.categoryBonus = roundMoney(current.categoryBonus + getDocumentCategoryBonus(row.products || []));
+    salesByEmployee.set(key, current);
+  }
+
+  const rows = employees.map((employee) => {
+    const payroll = normalizePayrollConfig(employee.payroll);
+    const sales = salesByEmployee.get(employee.href)
+      || salesByEmployee.get(normalizeEmployeeKey(employee.name))
+      || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0 };
+    const includesSalary = payroll.enabled && ['salary', 'salary_percent', 'salary_category_bonus'].includes(payroll.scheme);
+    const includesPercent = payroll.enabled && ['percent', 'salary_percent'].includes(payroll.scheme);
+    const includesCategoryBonus = payroll.enabled && ['category_bonus', 'salary_category_bonus'].includes(payroll.scheme);
+    const fixedSalary = includesSalary
+      ? calculateProratedMonthlySalary(payroll.monthlySalary, dateFrom, dateTo)
+      : 0;
+    const percentSource = payroll.percentBase === 'profit' ? Math.max(0, sales.profit) : Math.max(0, sales.revenue);
+    const commission = includesCategoryBonus
+      ? roundMoney(sales.categoryBonus)
+      : includesPercent
+        ? roundMoney(percentSource * payroll.percent / 100)
+        : 0;
+    return {
+      ...employee,
+      payroll,
+      documents: sales.documents,
+      revenue: sales.revenue,
+      profit: sales.profit,
+      categoryBonus: sales.categoryBonus,
+      fixedSalary,
+      commission,
+      totalSalary: roundMoney(fixedSalary + commission)
+    };
+  }).sort((left, right) => left.name.localeCompare(right.name, 'ru'));
+
+  const totals = rows.reduce((sum, row) => ({
+    employees: sum.employees + (row.payroll.enabled ? 1 : 0),
+    documents: sum.documents + row.documents,
+    revenue: roundMoney(sum.revenue + row.revenue),
+    profit: roundMoney(sum.profit + row.profit),
+    fixedSalary: roundMoney(sum.fixedSalary + row.fixedSalary),
+    commission: roundMoney(sum.commission + row.commission),
+    totalSalary: roundMoney(sum.totalSalary + row.totalSalary)
+  }), { employees: 0, documents: 0, revenue: 0, profit: 0, fixedSalary: 0, commission: 0, totalSalary: 0 });
+
+  return { dateFrom, dateTo, rows, totals: { ...totals, unassignedDocuments, unassignedRevenue } };
+}
+
+function getDocumentCategoryBonus(products) {
+  return roundMoney(products.reduce((sum, product) => {
+    const source = normalizeEmployeeKey(`${product.categoryPath || ''} ${product.categoryName || ''} ${product.name || ''}`);
+    const rule = categorySaleBonusRules.find((item) => item.match.test(source));
+    return sum + (rule?.amount || 0) * Math.max(0, Number(product.quantity || 0));
+  }, 0));
+}
+
+function normalizePayrollDate(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw httpError(400, 'Укажите период расчета зарплаты.');
+  return date;
+}
+
+function normalizeEmployeeKey(value) {
+  return String(value || '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ');
+}
+
+function calculateProratedMonthlySalary(monthlySalary, dateFrom, dateTo) {
+  const salary = Number(monthlySalary || 0);
+  if (salary <= 0) return 0;
+  const start = new Date(`${dateFrom}T00:00:00Z`);
+  const end = new Date(`${dateTo}T00:00:00Z`);
+  let current = new Date(start);
+  let total = 0;
+  while (current <= end) {
+    const year = current.getUTCFullYear();
+    const month = current.getUTCMonth();
+    const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+    total += salary / daysInMonth;
+    current = new Date(Date.UTC(year, month, current.getUTCDate() + 1));
+  }
+  return roundMoney(total);
+}
+
+function parseMarkedJsonFromDescription(description, startMarker, endMarker) {
+  const text = String(description || '');
+  const startIndex = text.indexOf(startMarker);
+  const endIndex = text.indexOf(endMarker);
+  if (startIndex < 0 || endIndex <= startIndex) return null;
+  try {
+    const encoded = text.slice(startIndex + startMarker.length, endIndex).trim();
+    return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function setMarkedJsonInDescription(description, startMarker, endMarker, value) {
+  const text = String(description || '');
+  const startIndex = text.indexOf(startMarker);
+  const endIndex = text.indexOf(endMarker);
+  const clean = startIndex >= 0 && endIndex > startIndex
+    ? `${text.slice(0, startIndex)}${text.slice(endIndex + endMarker.length)}`.trim()
+    : text.trim();
+  const encoded = Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  return [clean, `${startMarker}\n${encoded}\n${endMarker}`].filter(Boolean).join('\n\n');
 }
 
 async function getMoySkladStores() {

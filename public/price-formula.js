@@ -22,7 +22,7 @@ const state = {
 
 const els = Object.fromEntries([
   'formulaPanel', 'priceType36Select', 'priceType912Select', 'priceTypeWholesaleSelect', 'usdRateInput', 'markupInput',
-  'markupModeSelect', 'bank36Input', 'bank912Input', 'calculate36Input', 'calculate912Input', 'roundingSelect', 'searchInput', 'folderSelect', 'folderLabel',
+  'markupModeSelect', 'bank36Input', 'bank912Input', 'calculate36Input', 'calculate912Input', 'roundingSelect', 'wholesaleRoundingSelect', 'searchInput', 'folderSelect', 'folderLabel',
   'supplyProductsButton', 'selectFolderButton', 'reloadButton',
   'calculateButton', 'catalogCount', 'selectedCount', 'changedCount', 'skippedCount', 'catalogStatus',
   'saveButton', 'productRows', 'selectPage', 'prevPage', 'nextPage', 'pageLabel', 'templateSelect',
@@ -72,6 +72,7 @@ function bindEvents() {
     els.calculate36Input,
     els.calculate912Input,
     els.roundingSelect,
+    els.wholesaleRoundingSelect,
     els.fallbackMarkupModeSelect,
     els.fallbackMarkupInput,
     els.wholesaleFallbackMarkupModeSelect,
@@ -269,6 +270,7 @@ function applyTemplate(template) {
   els.calculate36Input.checked = template.calculate36 !== false;
   els.calculate912Input.checked = template.calculate912 !== false;
   els.roundingSelect.value = String(template.rounding ?? 10);
+  els.wholesaleRoundingSelect.value = String(template.wholesaleRounding ?? 0.1);
   saveSettings();
   state.calculated.clear();
   state.skipped.clear();
@@ -302,7 +304,8 @@ async function saveCurrentTemplate() {
     bank912: Number(els.bank912Input.value || 0),
     calculate36: els.calculate36Input.checked,
     calculate912: els.calculate912Input.checked,
-    rounding: Number(els.roundingSelect.value || 0)
+    rounding: Number(els.roundingSelect.value || 0),
+    wholesaleRounding: Number(els.wholesaleRoundingSelect.value || 0)
   };
   await saveFolderTemplate(folderHref, template, `Шаблон «${template.name}» сохранен в выбранную группу.`);
 }
@@ -874,7 +877,8 @@ function getFormulaSettingsFromForm() {
     bank912: Number(els.bank912Input.value || 0),
     calculate36: els.calculate36Input.checked,
     calculate912: els.calculate912Input.checked,
-    rounding: Number(els.roundingSelect.value || 0)
+    rounding: Number(els.roundingSelect.value || 0),
+    wholesaleRounding: Number(els.wholesaleRoundingSelect.value || 0)
   };
 }
 
@@ -893,7 +897,8 @@ function getFormulaSettingsFromTemplate(template) {
     bank912: Number(template.bank912 ?? 20),
     calculate36: template.calculate36 !== false,
     calculate912: template.calculate912 !== false,
-    rounding: Number(template.rounding ?? 10)
+    rounding: Number(template.rounding ?? 10),
+    wholesaleRounding: Number(template.wholesaleRounding ?? 0.1)
   };
 }
 
@@ -948,7 +953,7 @@ function calculateProductPrices(product, settings) {
   const minRaw = baseKgs + tierMarkup;
   const wholesaleRaw = buyPriceUsd + wholesaleTierMarkupUsd;
   const minPrice = roundBy(minRaw, settings.rounding);
-  const wholesalePrice = roundMoney(wholesaleRaw);
+  const wholesalePrice = roundBy(wholesaleRaw, settings.wholesaleRounding);
   const price36 = settings.calculate36 ? roundBy(minPrice * (1 + settings.bank36 / 100), settings.rounding) : null;
   const price912 = settings.calculate912 ? roundBy(minPrice * (1 + settings.bank912 / 100), settings.rounding) : null;
 
@@ -1089,7 +1094,7 @@ function formatSom(value) { return `${new Intl.NumberFormat('ru-RU', { minimumFr
 
 function formatBuyPrice(buyPrice) {
   const value = Number(buyPrice?.value || 0);
-  const currency = buyPrice?.currencyIsoCode || buyPrice?.currencyName || 'USD';
+  const currency = buyPrice?.currencyIsoCode || buyPrice?.currencyName || 'валюта не определена';
   if (value <= 0) return '<span class="muted">нет закупки</span>';
   return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value)} ${escapeHtml(currency)}`.trim();
 }
@@ -1103,7 +1108,7 @@ function formatWholesale(value, product, priceTypeHref) {
 
 function getBuyPriceCurrency(buyPrice) {
   const currency = normalizeSearch(`${buyPrice?.currencyIsoCode || ''} ${buyPrice?.currencyName || ''}`);
-  if (!currency || currency.includes('usd') || currency.includes('доллар')) return 'usd';
+  if (currency.includes('usd') || currency.includes('доллар')) return 'usd';
   if (currency.includes('kgs') || currency.includes('сом')) return 'kgs';
   return 'unknown';
 }
@@ -1125,6 +1130,7 @@ function loadSettings() {
       calculate36: true,
       calculate912: true,
       rounding: 10,
+      wholesaleRounding: 0.1,
       ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
     };
     els.usdRateInput.value = String(settings.usdRate);
@@ -1141,6 +1147,7 @@ function loadSettings() {
     els.calculate36Input.checked = settings.calculate36 !== false;
     els.calculate912Input.checked = settings.calculate912 !== false;
     els.roundingSelect.value = String(settings.rounding);
+    els.wholesaleRoundingSelect.value = String(settings.wholesaleRounding);
   } catch {
     els.usdRateInput.value = '89';
     els.markupInput.value = '0';
@@ -1156,6 +1163,7 @@ function loadSettings() {
     els.calculate36Input.checked = true;
     els.calculate912Input.checked = true;
     els.roundingSelect.value = '10';
+    els.wholesaleRoundingSelect.value = '0.1';
   }
 }
 
@@ -1174,7 +1182,8 @@ function saveSettings() {
     bank912Percent: Number(els.bank912Input.value || 0),
     calculate36: els.calculate36Input.checked,
     calculate912: els.calculate912Input.checked,
-    rounding: Number(els.roundingSelect.value || 0)
+    rounding: Number(els.roundingSelect.value || 0),
+    wholesaleRounding: Number(els.wholesaleRoundingSelect.value || 0)
   }));
 }
 

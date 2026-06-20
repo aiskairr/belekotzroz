@@ -138,6 +138,12 @@ h1, h2, p { margin: 0; }
   display: grid;
   gap: 8px;
 }
+.wholesale-rounding-field {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px);
+  gap: 7px;
+  margin-top: 16px;
+}
 .tier-head,
 .tier-row {
   display: grid;

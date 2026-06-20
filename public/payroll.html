@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Зарплаты сотрудников</title>
+    <link rel="stylesheet" href="/payroll.css">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main class="payroll-app">
+      <section id="payrollPanel" class="payroll-panel hidden">
+        <header class="page-heading">
+          <div>
+            <p class="eyebrow">Команда и мотивация</p>
+            <h1>Зарплаты</h1>
+            <p>Оклад и процент рассчитываются по продажам сотрудника за выбранный период.</p>
+          </div>
+          <div class="heading-actions">
+            <button id="printButton" class="secondary" type="button">Печать ведомости</button>
+            <button id="saveButton" type="button">Сохранить настройки</button>
+          </div>
+        </header>
+
+        <form id="filtersForm" class="filters">
+          <label><span>С даты</span><input id="dateFrom" type="date" required></label>
+          <label><span>По дату</span><input id="dateTo" type="date" required></label>
+          <div class="quick-periods">
+            <button type="button" data-period="month">Этот месяц</button>
+            <button type="button" data-period="previous-month">Прошлый месяц</button>
+          </div>
+          <button type="submit">Рассчитать</button>
+        </form>
+
+        <section class="summary-grid">
+          <article><span>Сотрудников в расчёте</span><strong id="totalEmployees">0</strong></article>
+          <article><span>Выручка</span><strong id="totalRevenue">0,00 сом</strong></article>
+          <article><span>Оклад за период</span><strong id="totalFixed">0,00 сом</strong></article>
+          <article><span>Бонусы и проценты</span><strong id="totalCommission">0,00 сом</strong></article>
+          <article class="summary-primary"><span>К выплате</span><strong id="totalSalary">0,00 сом</strong></article>
+        </section>
+
+        <section class="payroll-card">
+          <div class="card-title">
+            <div><h2>Ведомость сотрудников</h2><p id="status">Загружаю данные...</p></div>
+            <label class="search-field"><span>Поиск</span><input id="searchInput" type="search" placeholder="Имя или должность"></label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Сотрудник</th>
+                  <th>Должность</th>
+                  <th>Схема</th>
+                  <th>Оклад/мес.</th>
+                  <th>Ставка</th>
+                  <th>База</th>
+                  <th>Продажи</th>
+                  <th>Выручка</th>
+                  <th>Прибыль</th>
+                  <th>Оклад</th>
+                  <th>Бонус/процент</th>
+                  <th>К выплате</th>
+                </tr>
+              </thead>
+              <tbody id="payrollRows"><tr><td colspan="12">Загрузка...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/payroll.js?v=20260620-all-schemes" type="module"></script>
+  </body>
+</html>

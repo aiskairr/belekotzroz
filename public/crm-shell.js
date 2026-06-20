@@ -8,6 +8,7 @@ const roleLabels = {
 const navigation = [
   { id: 'sales', href: '/sales.html', label: 'Продажи', roles: ['admin', 'owner', 'employee'] },
   { id: 'reports', href: '/report.html', label: 'Отчетность', roles: ['admin', 'owner', 'accountant', 'employee'] },
+  { id: 'payroll', href: '/payroll.html', label: 'Зарплаты', roles: ['admin', 'owner'] },
   { id: 'priceFormula', href: '/price-formula.html', label: 'Расчет цен', roles: ['admin', 'owner', 'accountant'] },
   { id: 'audit', href: '/audit.html', label: 'Журнал действий', roles: ['admin', 'owner'] },
   { id: 'about', href: '/about.html', label: 'О системе', roles: ['admin', 'owner', 'accountant', 'employee'] }

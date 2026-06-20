@@ -33,6 +33,9 @@ const clearDraftButton = document.querySelector('#clearDraftButton');
 const crmSidebar = document.querySelector('#crmSidebar');
 const crmTopbar = document.querySelector('#crmTopbar');
 const crmBranchLabel = document.querySelector('#crmBranchLabel');
+const switchBranchButton = document.querySelector('#switchBranchButton');
+const switchBranchName = document.querySelector('#switchBranchName');
+const branchCancelButton = document.querySelector('#branchCancelButton');
 const settingsModal = document.querySelector('#settingsModal');
 const openSettingsButton = document.querySelector('#openSettingsButton');
 const topSettingsButton = document.querySelector('#topSettingsButton');
@@ -875,6 +878,7 @@ function initBranchSelection() {
 }
 
 function selectBranch(branchKey) {
+  if (!branches[branchKey]) return;
   selectedBranch = branchKey;
   applyBranchStore();
   branchScreen.classList.add('hidden');
@@ -883,6 +887,8 @@ function selectBranch(branchKey) {
   crmTopbar.classList.remove('hidden');
   document.body.classList.add('crm-active');
   crmBranchLabel.textContent = branches[branchKey] || 'Филиал не выбран';
+  if (switchBranchName) switchBranchName.textContent = branches[branchKey];
+  branchCancelButton?.classList.add('hidden');
   updateCrmProgress();
   scheduleDraftSave();
 }
@@ -1368,6 +1374,18 @@ function bindCrmShell() {
     clearDraft();
     window.location.reload();
   });
+  switchBranchButton?.addEventListener('click', openBranchSelection);
+  branchCancelButton?.addEventListener('click', closeBranchSelection);
+}
+
+function openBranchSelection() {
+  branchCancelButton?.classList.toggle('hidden', !selectedBranch);
+  branchScreen.classList.remove('hidden');
+}
+
+function closeBranchSelection() {
+  if (!selectedBranch) return;
+  branchScreen.classList.add('hidden');
 }
 
 function applyRoleAccess(user) {

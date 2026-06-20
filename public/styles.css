@@ -71,6 +71,14 @@ body {
   padding: 24px;
 }
 
+body.crm-active .branch-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  min-height: 100vh;
+  background: rgba(15, 23, 42, .58);
+}
+
 .branch-panel {
   width: min(560px, 100%);
   background: #fff;
@@ -89,6 +97,15 @@ body {
 
 .branch-button {
   grid-column: auto;
+}
+
+.branch-cancel-button {
+  width: 100%;
+  margin-top: 12px;
+  border: 1px solid #d5dde8;
+  background: #fff;
+  color: #344054;
+  box-shadow: none;
 }
 
 .branch-label {
@@ -984,6 +1001,22 @@ body[data-theme="red"] { --crm-accent: #c2414b; --crm-accent-soft: #fff1f2; --cr
 .crm-topbar > div > strong { color: #172033; font-size: 15px; }
 .crm-topbar > div > span { color: #667085; font-size: 12px; }
 .crm-topbar-actions { display: flex; align-items: center; gap: 16px; }
+.switch-branch-button {
+  display: grid;
+  min-width: 118px;
+  height: 38px;
+  align-content: center;
+  gap: 1px;
+  border: 1px solid #cdd8e6;
+  border-radius: 6px;
+  background: #fff;
+  color: #1e3a5f;
+  padding: 4px 10px;
+  box-shadow: none;
+  text-align: left;
+}
+.switch-branch-button span { color: #718096; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.switch-branch-button b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .crm-sync-status { display: flex; align-items: center; gap: 7px; color: #526174; font-size: 13px; font-weight: 650; }
 .crm-sync-status i { width: 8px; height: 8px; border-radius: 999px; background: #12b76a; box-shadow: 0 0 0 4px #ecfdf3; }
 .profile-button {
@@ -1028,7 +1061,7 @@ body.crm-active .app {
 body.crm-active .panel, body.crm-active .summary { border-color: #e0e6ed; box-shadow: 0 10px 30px rgba(34,48,74,.05); }
 body.crm-active .panel { padding: 24px; }
 body.crm-active .heading { display: none; }
-body.crm-active button:not(.secondary-button):not(.remove-item):not(.modal-close):not(.sidebar-toggle):not(.profile-button):not(.crm-settings-button):not([data-density]):not([data-theme]) { background: var(--crm-accent); }
+body.crm-active button:not(.secondary-button):not(.remove-item):not(.modal-close):not(.sidebar-toggle):not(.profile-button):not(.crm-settings-button):not(.switch-branch-button):not(.branch-cancel-button):not([data-density]):not([data-theme]) { background: var(--crm-accent); }
 body.crm-active .secondary-button { border-color: color-mix(in srgb, var(--crm-accent) 28%, #d8dee8); background: var(--crm-accent-soft); color: var(--crm-accent-dark); }
 body.crm-active input:focus, body.crm-active select:focus { border-color: var(--crm-accent); outline-color: color-mix(in srgb, var(--crm-accent) 18%, transparent); }
 body.crm-active .payment-scenario label:has(input:checked), body.crm-active .client-mode label:has(input:checked) { border-color: var(--crm-accent); background: var(--crm-accent-soft); color: var(--crm-accent-dark); }
@@ -1078,6 +1111,8 @@ body.density-compact .compact-summary { padding: 9px 11px; }
   .crm-topbar { height: 64px; padding: 0 12px; }
   .crm-sync-status { display: none; }
   .draft-status, .clear-draft-button { display: none; }
+  .switch-branch-button { min-width: 98px; }
+  .switch-branch-button span { display: none; }
   .profile-button { font-size: 0; }
   .crm-overview { padding: 16px; }
   .process-steps { width: 100%; overflow-x: auto; padding-bottom: 4px; }

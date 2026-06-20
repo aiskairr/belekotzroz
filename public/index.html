@@ -33,6 +33,7 @@
           <button class="branch-button" type="button" data-branch="ayu">Аю-Гранд</button>
           <button class="branch-button" type="button" data-branch="besh">Беш-Сары</button>
         </div>
+        <button id="branchCancelButton" class="branch-cancel-button hidden" type="button">Вернуться к продаже</button>
       </div>
     </section>
 
@@ -44,6 +45,7 @@
       <nav class="crm-nav" aria-label="Основная навигация">
         <a class="active" href="/" data-roles="admin owner employee">Продажи</a>
         <a href="/report.html" data-roles="admin owner accountant employee">Отчетность</a>
+        <a href="/payroll.html" data-roles="admin owner">Зарплаты</a>
         <a href="/price-formula.html" data-roles="admin owner accountant">Расчет цен</a>
         <a href="/audit.html" data-roles="admin owner">Журнал действий</a>
         <a href="/about.html">О системе</a>
@@ -66,6 +68,7 @@
       <div class="crm-topbar-actions">
         <span class="crm-sync-status"><i></i> МойСклад подключен</span>
         <span id="draftStatus" class="draft-status">Черновик не сохранен</span>
+        <button id="switchBranchButton" class="switch-branch-button" type="button"><span>Филиал</span><b id="switchBranchName">Выбрать</b></button>
         <button id="clearDraftButton" class="clear-draft-button" type="button">Очистить черновик</button>
         <button id="topSettingsButton" class="profile-button" type="button"><span id="profileInitials">OR</span><b id="topUserName">Ordo</b></button>
       </div>
@@ -358,6 +361,6 @@
 
     <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
-    <script src="/app.js?v=20260618-submit-fix" type="module"></script>
+    <script src="/app.js?v=20260620-branch-switch" type="module"></script>
   </body>
 </html>

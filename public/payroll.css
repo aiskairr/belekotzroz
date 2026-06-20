@@ -1,0 +1,74 @@
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #edf2f6; color: #172033; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+button, input, select { font: inherit; }
+button { min-height: 42px; border: 0; border-radius: 6px; background: var(--ordo-accent, #2563eb); color: #fff; padding: 10px 16px; cursor: pointer; font-weight: 800; }
+button.secondary, .quick-periods button { border: 1px solid #cbd5e1; background: #fff; color: #26364c; }
+button:disabled { cursor: wait; opacity: .58; }
+input, select { width: 100%; min-height: 40px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff; color: #172033; padding: 7px 9px; }
+input:disabled, select:disabled { background: #eef2f6; color: #8a96a7; }
+.hidden { display: none !important; }
+.payroll-panel { width: min(1680px, calc(100% - 40px)); margin: 28px auto 60px; }
+.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.page-heading h1, .page-heading p, .card-title h2, .card-title p { margin: 0; }
+.page-heading h1 { font-size: 36px; letter-spacing: 0; }
+.page-heading > div > p:last-child { margin-top: 7px; color: #637086; }
+.eyebrow { margin-bottom: 6px !important; color: var(--ordo-accent-dark, #1d4ed8); font-size: 13px; font-weight: 900; text-transform: uppercase; }
+.heading-actions { display: flex; gap: 10px; }
+.filters, .summary-grid article, .payroll-card { border: 1px solid #d7dee8; border-radius: 8px; background: #fff; box-shadow: 0 14px 36px rgba(32,48,72,.06); }
+.filters { display: grid; grid-template-columns: 190px 190px minmax(280px, 1fr) auto; gap: 12px; align-items: end; padding: 16px; }
+.filters label, .search-field { display: grid; gap: 6px; color: #56647a; font-size: 13px; font-weight: 750; }
+.quick-periods { display: flex; gap: 8px; }
+.summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.summary-grid article { display: grid; gap: 8px; min-height: 96px; align-content: center; padding: 16px; }
+.summary-grid span { color: #66758a; font-size: 13px; font-weight: 650; }
+.summary-grid strong { font-size: 23px; }
+.summary-grid .summary-primary { border-color: var(--ordo-accent, #2563eb); background: var(--ordo-accent-soft, #eff6ff); }
+.summary-primary strong { color: var(--ordo-accent-dark, #1d4ed8); }
+.payroll-card { overflow: hidden; }
+.card-title { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 18px; }
+.card-title p { margin-top: 5px; color: #66758a; font-size: 13px; }
+.search-field { width: min(320px, 100%); }
+.table-wrap { overflow: auto; border-top: 1px solid #dfe5ed; }
+table { width: 100%; min-width: 1550px; border-collapse: collapse; }
+th { position: sticky; top: 0; z-index: 2; background: #243b55; color: #fff; padding: 12px 10px; font-size: 12px; text-align: left; white-space: nowrap; }
+td { border-bottom: 1px solid #e1e6ed; padding: 10px; vertical-align: top; }
+tbody tr:hover { background: #f8fafc; }
+tbody tr.dirty { background: #fff9e8; }
+tbody tr.disabled-row { opacity: .66; }
+td select, td input { min-width: 120px; }
+.employee-cell { display: flex; min-width: 190px; align-items: flex-start; gap: 10px; }
+.employee-cell input { width: 18px; min-width: 18px; min-height: 18px; margin-top: 2px; }
+.employee-cell span { display: grid; gap: 3px; }
+.employee-cell small { color: #758196; }
+.custom-position { margin-top: 6px; }
+.percent-input { display: flex; align-items: center; gap: 5px; }
+.percent-input span { color: #69768a; font-weight: 800; }
+.number { text-align: right; white-space: nowrap; }
+.total-result strong { color: var(--ordo-accent-dark, #1d4ed8); }
+.error { color: #b42318; }
+
+@media (max-width: 900px) {
+  .payroll-panel { width: calc(100% - 24px); margin-top: 18px; }
+  .page-heading { align-items: stretch; flex-direction: column; }
+  .heading-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .filters { grid-template-columns: 1fr 1fr; }
+  .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-primary { grid-column: 1 / -1; }
+  .card-title { align-items: stretch; flex-direction: column; }
+}
+
+@media print {
+  body { background: #fff; padding: 0 !important; }
+  .shared-crm-sidebar, .shared-crm-topbar, .heading-actions, .filters, .search-field { display: none !important; }
+  .payroll-panel { width: 100%; margin: 0; }
+  .page-heading { margin-bottom: 12px; }
+  .summary-grid { grid-template-columns: repeat(5, 1fr); }
+  .payroll-card, .summary-grid article { box-shadow: none; }
+  .table-wrap { overflow: visible; }
+  table { min-width: 0; font-size: 8px; }
+  th, td { padding: 5px; }
+  td input, td select, .employee-cell input { border: 0; min-width: 0; appearance: none; padding: 0; }
+  .employee-cell small, .custom-position.hidden { display: none; }
+  @page { size: A4 landscape; margin: 8mm; }
+}
