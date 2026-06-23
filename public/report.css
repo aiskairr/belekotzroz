@@ -358,6 +358,16 @@ body.report-profit-hidden .document-card-head {
   color: #d8dcff;
 }
 
+.gift-label {
+  display: inline-block;
+  border: 1px solid #f4c56a;
+  border-radius: 4px;
+  background: #fff8e6;
+  color: #92400e;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+
 .document-meta {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -510,6 +520,35 @@ td.num {
 .print-sheet p {
   margin-bottom: 14px;
   text-align: center;
+}
+
+.print-payment-summary {
+  margin: 0 0 14px;
+  border: 1px solid #2f2f2f;
+}
+
+.print-payment-summary h2 {
+  margin: 0;
+  background: #c9c9c9 !important;
+  padding: 7px 10px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.print-payment-summary > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.print-payment-summary p {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  border-top: 1px solid #2f2f2f;
+  border-right: 1px solid #2f2f2f;
+  padding: 6px 8px;
+  text-align: left;
 }
 
 .print-sheet table {

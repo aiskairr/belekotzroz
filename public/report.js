@@ -242,7 +242,7 @@ function renderDocumentGroup(row) {
               <tr>
                 <td>${escapeHtml(product.code || '')}</td>
                 <td>${escapeHtml(product.name)}</td>
-                <td class="num">${formatSom(product.price)}</td>
+                <td class="num">${product.isGift ? '<strong class="gift-label">Подарок</strong>' : formatSom(product.price)}</td>
                 <td class="num">${formatQuantity(product.quantity)}</td>
                 <td class="num">${formatSom(product.sum)}</td>
                 <td class="return-cell">
@@ -306,12 +306,21 @@ function renderPrintReport() {
   const report = currentReport || { rows: [], totals: {} };
   const rows = (Array.isArray(report.rows) ? report.rows : []).filter((row) => row.type === currentDocumentType);
   const totals = calculateVisibleTotals(rows);
+  const paymentTotals = calculatePaymentTotals(rows);
 
   printReport.className = 'print-report';
   printReport.innerHTML = `
     <div class="print-sheet">
       <h1>${escapeHtml(getCurrentTypeLabel())}</h1>
       <p>Период: ${escapeHtml(formatDateOnly(els.dateFrom.value))} - ${escapeHtml(formatDateOnly(els.dateTo.value))}</p>
+      <section class="print-payment-summary">
+        <h2>Оплата по банкам и способам</h2>
+        <div>
+          ${paymentTotals.length
+            ? paymentTotals.map((item) => `<p><span>${escapeHtml(item.name)}</span><strong>${formatSom(item.amount)}</strong></p>`).join('')
+            : '<p><span>Нет данных об оплате</span><strong>0,00 сом</strong></p>'}
+        </div>
+      </section>
       <table>
         <thead>
           <tr class="print-head-main">
@@ -353,6 +362,43 @@ function renderPrintReport() {
       </table>
     </div>
   `;
+}
+
+function calculatePaymentTotals(rows) {
+  const totals = new Map();
+  const add = (name, amount) => {
+    const normalizedName = String(name || '').trim().replace(/\s+/g, ' ');
+    const numericAmount = Number(amount) || 0;
+    if (!normalizedName || numericAmount <= 0) return;
+    totals.set(normalizedName, (totals.get(normalizedName) || 0) + numericAmount);
+  };
+
+  rows.forEach((row) => {
+    const breakdown = parsePaymentBreakdown(row.comment);
+    if (breakdown.length) {
+      breakdown.forEach((item) => add(item.name, item.amount));
+      return;
+    }
+    add(row.paymentType || 'Не указан', row.amount);
+  });
+
+  return [...totals.entries()]
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((left, right) => right.amount - left.amount);
+}
+
+function parsePaymentBreakdown(comment) {
+  const result = [];
+  const pattern = /(?:^|\n|[.;]\s*)([^:\n.;]{1,60}):\s*([\d\s]+(?:[.,]\d{1,2})?)/gim;
+  let match;
+  while ((match = pattern.exec(String(comment || ''))) !== null) {
+    const name = match[1].trim();
+    if (!/(?:налич|qr|банк|bank|mbank|m\+|o!|zero|optima|bakai|payda|рассроч)/i.test(name)) continue;
+    if (/тип\s+оплаты/i.test(name)) continue;
+    const amount = Number(match[2].replace(/\s/g, '').replace(',', '.'));
+    if (Number.isFinite(amount) && amount > 0) result.push({ name, amount });
+  }
+  return result;
 }
 
 function calculateVisibleTotals(rows) {
@@ -406,7 +452,7 @@ function renderPrintWaybill(row) {
               <td>${index + 1}</td>
               <td>${escapeHtml(product.code || '')}</td>
               <td>${escapeHtml(product.name || '')}</td>
-              <td>${formatSom(product.price)}</td>
+              <td>${product.isGift ? 'Подарок' : formatSom(product.price)}</td>
               <td>${formatQuantity(product.quantity)}</td>
               <td>${formatSom(product.sum)}</td>
             </tr>
@@ -461,8 +507,8 @@ function renderPrintReceipt(row) {
           <div class="receipt-item">
             <div class="receipt-item-name">${index + 1}. ${escapeHtml(product.name || '')}</div>
             <div class="receipt-item-calc">
-              <span>${formatReceiptMoney(product.price || 0)} x ${escapeHtml(formatQuantity(product.quantity || 1))}</span>
-              <b>${formatReceiptMoney(product.sum || 0)}</b>
+              <span>${product.isGift ? 'ПОДАРОК' : `${formatReceiptMoney(product.price || 0)} x ${escapeHtml(formatQuantity(product.quantity || 1))}`}</span>
+              <b>${product.isGift ? '0,00' : formatReceiptMoney(product.sum || 0)}</b>
             </div>
           </div>
         `).join('')}
@@ -505,7 +551,7 @@ function renderPrintDocumentGroup(row) {
       <tr class="report-product-row">
         <td>${escapeHtml(product.code)}</td>
         <td colspan="${canViewProfit ? 4 : 3}">${escapeHtml(product.name)}</td>
-        <td>${formatSom(product.price)}</td>
+        <td>${product.isGift ? 'Подарок' : formatSom(product.price)}</td>
         <td>${formatQuantity(product.quantity)}</td>
         <td>${formatSom(product.sum)}</td>
         <td>${escapeHtml(row.paymentType)}</td>

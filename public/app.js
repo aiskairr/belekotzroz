@@ -801,6 +801,7 @@ function addProductToOrder(product) {
     productCost: product?.cost || 0,
     productCode: product?.code || '',
     deliverySelected: true,
+    isGift: false,
     quantity: 1
   });
   renderOrderItems();
@@ -835,6 +836,7 @@ function renderOrderItems() {
     const priceInput = document.createElement('input');
     priceInput.inputMode = 'decimal';
     priceInput.value = item.productPrice || '';
+    priceInput.disabled = item.isGift === true;
     priceInput.addEventListener('input', () => {
       item.productPrice = parseMoney(priceInput.value);
       item.priceManual = true;
@@ -857,6 +859,27 @@ function renderOrderItems() {
       scheduleDraftSave();
     });
     quantityLabel.append(quantityTitle, quantityInput);
+
+    const giftLabel = document.createElement('label');
+    giftLabel.className = 'item-gift';
+    const giftInput = document.createElement('input');
+    giftInput.type = 'checkbox';
+    giftInput.checked = item.isGift === true;
+    giftInput.addEventListener('change', () => {
+      item.isGift = giftInput.checked;
+      if (item.isGift) {
+        item.regularPrice = Number(item.productPrice || item.regularPrice || 0);
+        item.productPrice = 0;
+      } else {
+        item.productPrice = Number(item.regularPrice || 0);
+      }
+      renderOrderItems();
+      updateCalculation();
+      scheduleDraftSave();
+    });
+    const giftTitle = document.createElement('span');
+    giftTitle.textContent = 'Подарок';
+    giftLabel.append(giftInput, giftTitle);
 
     const deliveryLabel = document.createElement('label');
     deliveryLabel.className = `item-delivery${fields.deliveryEnabled.checked ? '' : ' hidden'}`;
@@ -882,7 +905,7 @@ function renderOrderItems() {
       scheduleDraftSave();
     });
 
-    row.append(productInfo, priceLabel, quantityLabel, deliveryLabel, remove);
+    row.append(productInfo, priceLabel, quantityLabel, giftLabel, deliveryLabel, remove);
     itemsList.append(row);
   }
 }
@@ -2101,8 +2124,8 @@ function renderPrintReceipt(data) {
           <div class="receipt-item">
             <div class="receipt-item-name">${index + 1}. ${escapeHtml(item.productName || '')}</div>
             <div class="receipt-item-calc">
-              <span>${formatReceiptMoney(item.productPrice || 0)} x ${escapeHtml(String(item.quantity || 1))}</span>
-              <b>${formatReceiptMoney(item.lineTotal || 0)}</b>
+              <span>${item.isGift ? 'ПОДАРОК' : `${formatReceiptMoney(item.productPrice || 0)} x ${escapeHtml(String(item.quantity || 1))}`}</span>
+              <b>${item.isGift ? '0,00' : formatReceiptMoney(item.lineTotal || 0)}</b>
             </div>
           </div>
         `).join('')}

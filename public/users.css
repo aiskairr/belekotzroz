@@ -30,6 +30,7 @@ input:focus, select:focus { border-color: var(--ordo-accent, #2563eb); box-shado
 fieldset { min-width: 0; margin: 0; border: 1px solid #dbe3ec; border-radius: 6px; padding: 12px; } legend { padding: 0 5px; }
 fieldset label { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; } fieldset input { width: 17px; min-height: 17px; }
 .permission-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.permission-grid .report-profit-permission { grid-column: 1 / -1; margin-top: -3px; margin-left: 24px; color: #1c6cae; }
 .user-card footer { display: grid; grid-template-columns: minmax(280px, 1fr) auto auto auto; align-items: end; gap: 14px; border-top: 1px solid #eef1f5; background: #fbfcfd; padding: 14px 16px; }
 .password-input-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .password-icon { min-height: 42px; border: 1px solid #cbd6e2; background: #fff; color: #344054; padding: 7px 10px; font-size: 11px; }

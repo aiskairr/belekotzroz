@@ -61,6 +61,7 @@ function renderShell(user, page) {
 
   document.body.insertAdjacentHTML('afterbegin', `
     <aside class="shared-crm-sidebar">
+      <button id="sharedCrmClose" class="shared-crm-close" type="button" aria-label="Закрыть меню">×</button>
       <a class="shared-crm-brand" href="/sales.html"><span>O</span><div><strong>Ordo CRM</strong><small>МойСклад</small></div></a>
       <nav>${links}</nav>
       <div class="shared-crm-sidebar-foot">
@@ -79,7 +80,21 @@ function renderShell(user, page) {
     ${renderSettingsModal()}
   `);
 
-  document.querySelector('#sharedCrmMenu').addEventListener('click', () => document.body.classList.toggle('crm-menu-open'));
+  const menuButton = document.querySelector('#sharedCrmMenu');
+  const closeMenu = () => {
+    document.body.classList.remove('crm-menu-open');
+    menuButton.setAttribute('aria-expanded', 'false');
+  };
+  menuButton.setAttribute('aria-expanded', 'false');
+  menuButton.addEventListener('click', () => {
+    const opened = document.body.classList.toggle('crm-menu-open');
+    menuButton.setAttribute('aria-expanded', String(opened));
+  });
+  document.querySelector('#sharedCrmClose').addEventListener('click', closeMenu);
+  document.querySelectorAll('.shared-crm-sidebar nav a').forEach((link) => link.addEventListener('click', closeMenu));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeMenu();
+  });
   document.querySelector('#sharedCrmSettings').addEventListener('click', () => {
     syncSharedSettingsControls();
     document.querySelector('#sharedSettingsModal').classList.remove('hidden');

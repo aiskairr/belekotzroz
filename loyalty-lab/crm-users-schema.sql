@@ -35,7 +35,7 @@ for each row execute function public.crm_users_set_updated_at();
 
 insert into public.crm_users (login, name, position, role, branches, permissions)
 values
-  ('adil', 'Адил', 'Менеджер', 'manager', array['ayu'], '["sales","debtSale","deliveries","reports","expenses","payroll","about"]'::jsonb),
+  ('adil', 'Адил', 'Менеджер', 'manager', array['ayu'], '["sales","debtSale","deliveries","reports","reportProfit","expenses","payroll","about"]'::jsonb),
   ('adilet', 'Адилет', 'Продавец', 'seller', array['besh'], '["sales","debtSale","deliveries","reports","about"]'::jsonb),
   ('askat', 'Аскат', 'Продавец, грузчик', 'seller', array['ayu'], '["sales","debtSale","deliveries","reports","about"]'::jsonb),
   ('barchynai', 'Барчынай', 'Продавец', 'seller', array['besh'], '["sales","debtSale","deliveries","reports","about"]'::jsonb),
@@ -44,7 +44,7 @@ values
   ('zhenishbek', 'Женишбек', 'Владелец', 'owner', array['ayu','besh'], '["sales","debtSale","deliveries","reports","expenses","payroll","priceFormula","audit","users","about"]'::jsonb),
   ('kudaiberdi', 'Кудайберди', 'Главный администратор', 'admin', array['ayu','besh'], '["sales","debtSale","deliveries","reports","expenses","payroll","priceFormula","audit","users","about"]'::jsonb),
   ('ulan', 'Улан', 'Продавец, грузчик', 'seller', array['besh'], '["sales","debtSale","deliveries","reports","about"]'::jsonb),
-  ('cholpon', 'Чолпон', 'Менеджер', 'manager', array['besh'], '["sales","debtSale","deliveries","reports","expenses","payroll","about"]'::jsonb),
+  ('cholpon', 'Чолпон', 'Менеджер', 'manager', array['besh'], '["sales","debtSale","deliveries","reports","reportProfit","expenses","payroll","about"]'::jsonb),
   ('yryskeldi', 'Ырыскелди', 'Продавец, грузчик', 'seller', array['ayu','besh'], '["sales","debtSale","deliveries","reports","about"]'::jsonb),
   ('elmira', 'Эльмира', 'Продавец', 'seller', array['besh'], '["sales","debtSale","deliveries","reports","about"]'::jsonb)
 on conflict (login) do update set

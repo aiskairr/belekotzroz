@@ -20,6 +20,7 @@ const permissions = {
   debtSale: 'Продажа в долг',
   deliveries: 'Доставки',
   reports: 'Отчетность',
+  reportProfit: 'Показывать прибыль в отчетности',
   expenses: 'Расходы',
   payroll: 'Зарплаты',
   priceFormula: 'Расчет цен',
@@ -76,7 +77,10 @@ function renderUsers() {
           <label><input type="checkbox" data-branch="besh" ${entry.branches.includes('besh') ? 'checked' : ''} ${disabled}> Беш-Сары</label>
         </fieldset>
         <fieldset><legend>Разрешенные разделы</legend><div class="permission-grid">
-          ${Object.entries(permissions).map(([value, label]) => `<label><input type="checkbox" data-permission="${value}" ${fullAccess || entry.permissions.includes(value) ? 'checked' : ''} ${fullAccess || locked ? 'disabled' : ''}> ${label}</label>`).join('')}
+          ${Object.entries(permissions).map(([value, label]) => {
+            const profitLocked = value === 'reportProfit' && (user.role !== 'admin' || !['admin', 'owner', 'manager', 'accountant'].includes(entry.role));
+            return `<label class="${value === 'reportProfit' ? 'report-profit-permission' : ''}"><input type="checkbox" data-permission="${value}" ${fullAccess || entry.permissions.includes(value) ? 'checked' : ''} ${fullAccess || locked || profitLocked ? 'disabled' : ''}> ${label}</label>`;
+          }).join('')}
         </div></fieldset>
       </div>
       <footer>
@@ -121,7 +125,8 @@ function handleRoleChange(event) {
   const card = event.target.closest('.user-card');
   const fullAccess = ['admin', 'owner'].includes(event.target.value);
   card.querySelectorAll('[data-permission]').forEach((checkbox) => {
-    checkbox.disabled = fullAccess;
+    checkbox.disabled = fullAccess || (checkbox.dataset.permission === 'reportProfit' && (user.role !== 'admin' || !['manager', 'accountant'].includes(event.target.value)));
+    if (checkbox.dataset.permission === 'reportProfit' && !['admin', 'owner', 'manager', 'accountant'].includes(event.target.value)) checkbox.checked = false;
     if (fullAccess) checkbox.checked = true;
   });
 }

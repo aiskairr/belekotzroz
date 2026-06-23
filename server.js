@@ -516,6 +516,9 @@ function calculate(input) {
   if (!items.length) {
     throw httpError(400, 'Добавьте хотя бы один товар.');
   }
+  if (!items.some((item) => !item.isGift && item.lineTotal > 0)) {
+    throw httpError(400, 'В продаже должен быть хотя бы один оплачиваемый товар. Подарок добавляется вместе с покупкой.');
+  }
   if (!Number.isFinite(cashPrepayment) || cashPrepayment < 0) {
     throw httpError(400, 'Наличная предоплата не может быть отрицательной.');
   }
@@ -992,7 +995,8 @@ function getOrderItems(input) {
       }];
 
   return rawItems.map((item, index) => {
-    const productPrice = toMoney(item.productPrice);
+    const isGift = item.isGift === true;
+    const productPrice = isGift ? 0 : toMoney(item.productPrice);
     const productCost = toMoney(item.productCost || 0);
     const quantity = Number(item.quantity || 1);
     const assortmentHref = item.assortmentHref;
@@ -1001,7 +1005,7 @@ function getOrderItems(input) {
     if (!assortmentHref) {
       throw httpError(400, `Выберите товар в позиции ${index + 1}.`);
     }
-    if (!Number.isFinite(productPrice) || productPrice <= 0) {
+    if (!Number.isFinite(productPrice) || (!isGift && productPrice <= 0)) {
       throw httpError(400, `Укажите цену товара в позиции ${index + 1}.`);
     }
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -1014,6 +1018,7 @@ function getOrderItems(input) {
       assortmentType,
       productPrice,
       productCost,
+      isGift,
       quantity,
       lineTotal: roundMoney(productPrice * quantity),
       costTotal: roundMoney(productCost * quantity)
@@ -2403,7 +2408,8 @@ function mapReportDocument(document, currenciesByHref = new Map()) {
       categoryPath: position.assortment?.productFolder?.pathName || '',
       quantity: Number(position.quantity || 0),
       price: fromReportDocumentMoney(position.price, moneyRate),
-      sum: roundMoney(fromReportDocumentMoney(position.price, moneyRate) * Number(position.quantity || 0))
+      sum: roundMoney(fromReportDocumentMoney(position.price, moneyRate) * Number(position.quantity || 0)),
+      isGift: fromReportDocumentMoney(position.price, moneyRate) <= 0
     })),
     productText: buildReportProductText(positions.map((position) => {
       const name = position.assortment?.name || position.name || 'Товар';
@@ -3032,6 +3038,7 @@ async function getPayrollReport(input) {
 
 function getDocumentCategoryBonus(products) {
   return roundMoney(products.reduce((sum, product) => {
+    if (product.isGift || Number(product.price || 0) <= 0) return sum;
     const source = normalizeEmployeeKey(`${product.categoryPath || ''} ${product.categoryName || ''} ${product.name || ''}`);
     const rule = categorySaleBonusRules.find((item) => item.match.test(source));
     return sum + (rule?.amount || 0) * Math.max(0, Number(product.quantity || 0));
@@ -3338,7 +3345,7 @@ async function sendTelegramPhoto(token, chatId, buffer, receiptPhoto, caption) {
 }
 
 function buildTelegramReceiptCaption(calculation, input, document) {
-  const products = (calculation.items || []).map((item) => `• ${item.productName || item.name || 'Товар'} × ${item.quantity || 1}`).join('\n');
+  const products = (calculation.items || []).map((item) => `• ${item.productName || item.name || 'Товар'} × ${item.quantity || 1}${item.isGift ? ' — ПОДАРОК' : ''}`).join('\n');
   return [
     `Чек: ${document.type === 'retaildemand' ? 'Продажа' : 'Отгрузка'} №${document.name || ''}`,
     `Сумма: ${formatMoney(calculation.finalTotal || calculation.baseTotal || 0)} сом`,
@@ -3646,7 +3653,8 @@ function requireReportAuth(req) {
 }
 
 function canViewReportProfit(user) {
-  return ['admin', 'owner', 'manager', 'accountant'].includes(user?.role);
+  return ['admin', 'owner', 'accountant'].includes(user?.role)
+    || (user?.role === 'manager' && hasCrmPermission(user, 'reportProfit'));
 }
 
 function sanitizeSalesReportForUser(report, user) {
@@ -3707,11 +3715,11 @@ function setReportSession(res, login) {
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
 }
 
-const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'expenses', 'payroll', 'priceFormula', 'audit', 'users', 'about'];
+const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'priceFormula', 'audit', 'users', 'about'];
 const crmRolePermissions = {
   admin: [...crmPermissionNames],
   owner: [...crmPermissionNames],
-  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'expenses', 'payroll', 'about'],
+  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'about'],
   seller: ['sales', 'debtSale', 'deliveries', 'reports', 'about'],
   logistics: ['sales', 'debtSale', 'deliveries', 'about'],
   accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'about'],
@@ -3787,7 +3795,7 @@ async function authenticateCrmUser(login, password) {
 async function updateManagedCrmUser(id, input, actor) {
   const currentRows = await supabaseGet('/rest/v1/crm_users', {
     id: `eq.${id}`,
-    select: 'id,name,role',
+    select: 'id,name,role,permissions',
     limit: '1'
   });
   const current = currentRows[0];
@@ -3799,9 +3807,17 @@ async function updateManagedCrmUser(id, input, actor) {
     throw httpError(403, 'Только главный администратор может назначать эту роль.');
   }
   const role = ['admin', 'owner', 'manager', 'seller', 'logistics', 'accountant', 'employee'].includes(input.role) ? input.role : 'seller';
-  const permissions = role === 'admin' || role === 'owner'
+  let permissions = role === 'admin' || role === 'owner'
     ? [...crmPermissionNames]
     : [...new Set((Array.isArray(input.permissions) ? input.permissions : crmRolePermissions[role] || []).filter((value) => crmPermissionNames.includes(value)))];
+  if (actor?.role !== 'admin' && role !== 'admin' && role !== 'owner') {
+    const currentCanViewProfit = normalizeCrmPermissions(current.role, current.permissions).includes('reportProfit');
+    permissions = permissions.filter((permission) => permission !== 'reportProfit');
+    if (currentCanViewProfit) permissions.push('reportProfit');
+  }
+  if (!['admin', 'owner', 'manager', 'accountant'].includes(role)) {
+    permissions = permissions.filter((permission) => permission !== 'reportProfit');
+  }
   const branches = normalizeCrmBranches(input.branches);
   if (!branches.length) throw httpError(400, 'Выберите хотя бы один филиал.');
   const payload = {
