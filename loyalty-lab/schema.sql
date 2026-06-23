@@ -23,6 +23,23 @@ create table if not exists public.loyalty_transactions (
 create index if not exists loyalty_customers_phone_idx on public.loyalty_customers(phone);
 create index if not exists loyalty_transactions_customer_created_idx on public.loyalty_transactions(customer_id, created_at desc);
 
+create table if not exists public.business_expenses (
+  id uuid primary key default gen_random_uuid(),
+  expense_date date not null default current_date,
+  category text not null check (category in ('fixed', 'variable', 'one_time', 'operational', 'marketing', 'taxes', 'financial')),
+  subcategory text not null,
+  amount numeric(14, 2) not null check (amount > 0),
+  branch_name text not null default '',
+  payment_method text not null default '',
+  description text not null default '',
+  created_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists business_expenses_date_idx on public.business_expenses(expense_date desc);
+create index if not exists business_expenses_category_idx on public.business_expenses(category);
+
 create or replace function public.loyalty_set_updated_at()
 returns trigger
 language plpgsql
@@ -36,6 +53,11 @@ $$;
 drop trigger if exists loyalty_customers_updated_at on public.loyalty_customers;
 create trigger loyalty_customers_updated_at
 before update on public.loyalty_customers
+for each row execute function public.loyalty_set_updated_at();
+
+drop trigger if exists business_expenses_updated_at on public.business_expenses;
+create trigger business_expenses_updated_at
+before update on public.business_expenses
 for each row execute function public.loyalty_set_updated_at();
 
 create or replace function public.loyalty_accrue(

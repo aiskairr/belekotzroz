@@ -6,6 +6,9 @@ const reportStatus = document.querySelector('#reportStatus');
 const reportRows = document.querySelector('#reportRows');
 const retailStoreSelect = document.querySelector('#retailStore');
 const printReport = document.querySelector('#printReport');
+const documentsTitle = document.querySelector('#documentsTitle');
+const salesTabCount = document.querySelector('#salesTabCount');
+const demandsTabCount = document.querySelector('#demandsTabCount');
 
 const els = {
   dateFrom: document.querySelector('#dateFrom'),
@@ -17,10 +20,13 @@ const els = {
   totalAmount: document.querySelector('#totalAmount'),
   totalPaid: document.querySelector('#totalPaid'),
   totalUnpaid: document.querySelector('#totalUnpaid'),
-  totalNetProfit: document.querySelector('#totalNetProfit')
+  totalNetProfit: document.querySelector('#totalNetProfit'),
+  profitSummaryCard: document.querySelector('#profitSummaryCard')
 };
 
 let currentReport = null;
+let canViewProfit = false;
+let currentDocumentType = 'retaildemand';
 let currentPeriod = 'today';
 let periodOffset = 0;
 
@@ -29,7 +35,7 @@ init();
 async function init() {
   setPeriod('today');
   bindEvents();
-  const user = await initCrmShell({ page: 'reports', allowedRoles: ['admin', 'owner', 'accountant', 'employee'] });
+  const user = await initCrmShell({ page: 'reports', allowedRoles: ['admin', 'owner', 'manager', 'seller', 'accountant'] });
   if (user) await showReport();
 }
 
@@ -60,7 +66,15 @@ function bindEvents() {
 
   document.querySelector('#printButton').addEventListener('click', () => {
     renderPrintReport();
-    printWithTitle(`Отчет продаж ${els.dateFrom.value} - ${els.dateTo.value}`);
+    printWithTitle(`${getCurrentTypeLabel()} ${els.dateFrom.value} - ${els.dateTo.value}`);
+  });
+
+  document.querySelectorAll('[data-report-type]').forEach((button) => {
+    button.addEventListener('click', () => {
+      currentDocumentType = button.dataset.reportType;
+      document.querySelectorAll('[data-report-type]').forEach((item) => item.classList.toggle('active', item === button));
+      renderReport(currentReport || { rows: [] });
+    });
   });
 }
 
@@ -109,11 +123,18 @@ async function loadReport() {
 }
 
 function renderReport(report) {
-  const rows = Array.isArray(report.rows) ? report.rows : [];
-  renderTotals(report.totals || {});
+  canViewProfit = report?.canViewProfit === true;
+  document.body.classList.toggle('report-profit-hidden', !canViewProfit);
+  els.profitSummaryCard.classList.toggle('hidden', !canViewProfit);
+  const allRows = Array.isArray(report?.rows) ? report.rows : [];
+  const rows = allRows.filter((row) => row.type === currentDocumentType);
+  salesTabCount.textContent = formatNumber(allRows.filter((row) => row.type === 'retaildemand').length);
+  demandsTabCount.textContent = formatNumber(allRows.filter((row) => row.type === 'demand').length);
+  documentsTitle.textContent = currentDocumentType === 'demand' ? 'Отгрузки' : 'Продажи';
+  renderTotals(calculateVisibleTotals(rows));
 
   if (!rows.length) {
-    reportRows.innerHTML = '<div class="empty-state">За этот период документов нет.</div>';
+    reportRows.innerHTML = `<div class="empty-state">За этот период ${currentDocumentType === 'demand' ? 'отгрузок' : 'продаж'} нет.</div>`;
     return;
   }
 
@@ -185,10 +206,10 @@ function renderDocumentGroup(row) {
           <span>Сотрудник</span>
           <strong>${escapeHtml(row.employeeName || '-')}</strong>
         </div>
-        <div>
+        ${canViewProfit ? `<div>
           <span>Прибыль</span>
           <strong>${formatSom(row.netProfit)}</strong>
-        </div>
+        </div>` : ''}
         <div>
           <span>Тип оплаты</span>
           <strong>${escapeHtml(row.paymentType || '-')}</strong>
@@ -278,18 +299,18 @@ function renderTotals(totals) {
   els.totalAmount.textContent = formatSom(totals.amount || 0);
   els.totalPaid.textContent = formatSom(totals.paid || 0);
   els.totalUnpaid.textContent = formatSom(totals.unpaid || 0);
-  els.totalNetProfit.textContent = formatSom(totals.netProfit || 0);
+  if (canViewProfit) els.totalNetProfit.textContent = formatSom(totals.netProfit || 0);
 }
 
 function renderPrintReport() {
   const report = currentReport || { rows: [], totals: {} };
-  const rows = Array.isArray(report.rows) ? report.rows : [];
-  const totals = report.totals || {};
+  const rows = (Array.isArray(report.rows) ? report.rows : []).filter((row) => row.type === currentDocumentType);
+  const totals = calculateVisibleTotals(rows);
 
   printReport.className = 'print-report';
   printReport.innerHTML = `
     <div class="print-sheet">
-      <h1>Отчет продаж</h1>
+      <h1>${escapeHtml(getCurrentTypeLabel())}</h1>
       <p>Период: ${escapeHtml(formatDateOnly(els.dateFrom.value))} - ${escapeHtml(formatDateOnly(els.dateTo.value))}</p>
       <table>
         <thead>
@@ -301,12 +322,12 @@ function renderPrintReport() {
             <th colspan="2">Организация</th>
             <th colspan="2">Контрагент</th>
             <th>Сотрудник</th>
-            <th>Прибыль</th>
+            ${canViewProfit ? '<th>Прибыль</th>' : ''}
             <th colspan="2">Комментарий</th>
           </tr>
           <tr class="print-head-sub">
             <th>Код</th>
-            <th colspan="4">Наименование товара</th>
+            <th colspan="${canViewProfit ? 4 : 3}">Наименование товара</th>
             <th>Цена</th>
             <th>Кол-во</th>
             <th>Сумма</th>
@@ -324,7 +345,7 @@ function renderPrintReport() {
             <td colspan="2">Итого</td>
             <td>${formatSom(totals.amount || 0)}</td>
             <td colspan="6"></td>
-            <td>${formatSom(totals.netProfit || 0)}</td>
+            ${canViewProfit ? `<td>${formatSom(totals.netProfit || 0)}</td>` : ''}
             <td>${formatSom(totals.unpaid || 0)}</td>
             <td></td>
           </tr>
@@ -332,6 +353,21 @@ function renderPrintReport() {
       </table>
     </div>
   `;
+}
+
+function calculateVisibleTotals(rows) {
+  return rows.reduce((totals, row) => {
+    totals.documents += 1;
+    totals.amount += Number(row.amount) || 0;
+    totals.paid += Number(row.paid) || 0;
+    totals.unpaid += Number(row.unpaid) || 0;
+    totals.netProfit += Number(row.netProfit) || 0;
+    return totals;
+  }, { documents: 0, amount: 0, paid: 0, unpaid: 0, netProfit: 0 });
+}
+
+function getCurrentTypeLabel() {
+  return currentDocumentType === 'demand' ? 'Отчет по отгрузкам' : 'Отчет по продажам';
 }
 
 function renderPrintWaybill(row) {
@@ -462,13 +498,13 @@ function renderPrintDocumentGroup(row) {
       <td colspan="2">${escapeHtml(row.organizationName)}</td>
       <td colspan="2">${escapeHtml(row.customerName)}</td>
       <td>${escapeHtml(row.employeeName)}</td>
-      <td>${formatSom(row.netProfit)}</td>
+      ${canViewProfit ? `<td>${formatSom(row.netProfit)}</td>` : ''}
       <td colspan="2">${escapeHtml(row.comment || row.paymentType || '')}</td>
     </tr>
     ${products.map((product) => `
       <tr class="report-product-row">
         <td>${escapeHtml(product.code)}</td>
-        <td colspan="4">${escapeHtml(product.name)}</td>
+        <td colspan="${canViewProfit ? 4 : 3}">${escapeHtml(product.name)}</td>
         <td>${formatSom(product.price)}</td>
         <td>${formatQuantity(product.quantity)}</td>
         <td>${formatSom(product.sum)}</td>

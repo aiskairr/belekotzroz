@@ -4,6 +4,7 @@ const branchScreen = document.querySelector('#branchScreen');
 const appPreloader = document.querySelector('#appPreloader');
 const branchLabel = document.querySelector('#branchLabel');
 const paymentTypeSelect = document.querySelector('#paymentType');
+const secondPaymentTypeSelect = document.querySelector('#secondPaymentType');
 const employeeSelect = document.querySelector('#employee');
 const storeSelect = document.querySelector('#store');
 const existingCustomerSelect = document.querySelector('#existingCustomer');
@@ -25,6 +26,11 @@ const printDocumentButton = document.querySelector('#printDocumentButton');
 const openMoyskladButton = document.querySelector('#openMoyskladButton');
 const closeSuccessModalButton = document.querySelector('#closeSuccessModalButton');
 const printReceipt = document.querySelector('#printReceipt');
+const receiptPhotoInput = document.querySelector('#receiptPhoto');
+const receiptPhotoPreview = document.querySelector('#receiptPhotoPreview');
+const receiptPhotoImage = document.querySelector('#receiptPhotoImage');
+const receiptPhotoName = document.querySelector('#receiptPhotoName');
+const clearReceiptPhotoButton = document.querySelector('#clearReceiptPhoto');
 const crmLoginScreen = document.querySelector('#crmLoginScreen');
 const crmLoginForm = document.querySelector('#crmLoginForm');
 const crmLoginStatus = document.querySelector('#crmLoginStatus');
@@ -42,6 +48,7 @@ const topSettingsButton = document.querySelector('#topSettingsButton');
 const closeSettingsButton = document.querySelector('#closeSettingsButton');
 const sidebarToggle = document.querySelector('#sidebarToggle');
 const processSteps = [...document.querySelectorAll('.process-steps span')];
+const debtSaleMode = window.location.pathname === '/debt-sale.html';
 
 form.noValidate = true;
 
@@ -65,13 +72,29 @@ const fields = {
   prepaymentMethodField: document.querySelector('#prepaymentMethodField'),
   transferPrepaymentField: document.querySelector('#transferPrepaymentField'),
   paymentTypeField: document.querySelector('#paymentTypeField'),
+  paymentTypeFieldLabel: document.querySelector('#paymentTypeFieldLabel'),
+  secondPaymentTypeField: document.querySelector('#secondPaymentTypeField'),
+  secondBankAmountField: document.querySelector('#secondBankAmountField'),
+  secondPaymentType: secondPaymentTypeSelect,
+  secondBankAmount: document.querySelector('#secondBankAmount'),
+  mixedBankSplit: document.querySelector('#mixedBankSplit'),
+  primaryBankPreviewLabel: document.querySelector('#primaryBankPreviewLabel'),
+  primaryBankAmountPreview: document.querySelector('#primaryBankAmountPreview'),
+  secondBankPreviewLabel: document.querySelector('#secondBankPreviewLabel'),
+  secondBankAmountPreview: document.querySelector('#secondBankAmountPreview'),
   cashPrepayment: document.querySelector('#cashPrepayment'),
   prepaymentMethod: document.querySelector('#prepaymentMethod'),
   transferPrepayment: document.querySelector('#transferPrepayment'),
   loyaltyRedemption: document.querySelector('#loyaltyRedemption'),
   customerName: document.querySelector('#customerName'),
   customerPhone: document.querySelector('#customerPhone'),
-  customerAddress: document.querySelector('#customerAddress')
+  customerAddress: document.querySelector('#customerAddress'),
+  deliveryEnabled: document.querySelector('#deliveryEnabled'),
+  deliveryFields: document.querySelector('#deliveryFields'),
+  deliveryDate: document.querySelector('#deliveryDate'),
+  deliveryTime: document.querySelector('#deliveryTime'),
+  deliveryAddress: document.querySelector('#deliveryAddress'),
+  deliveryNotes: document.querySelector('#deliveryNotes')
 };
 
 const summary = {
@@ -140,11 +163,42 @@ boot();
 
 applyUiSettings();
 bindCrmShell();
+configureSaleMode();
+
+function configureSaleMode() {
+  if (!debtSaleMode) return;
+
+  document.body.classList.add('debt-sale-mode');
+  document.querySelector('#paymentScenarioField')?.classList.add('hidden');
+  document.querySelector('#salesNavLink')?.classList.remove('active');
+  document.querySelector('#debtSaleNavLink')?.classList.add('active');
+  const debtTopbarLink = document.querySelector('.debts-topbar-button');
+  if (debtTopbarLink) {
+    debtTopbarLink.href = '/sales.html';
+    debtTopbarLink.textContent = 'Обычная продажа';
+  }
+  const debtRadio = document.createElement('input');
+  debtRadio.type = 'radio';
+  debtRadio.name = 'paymentScenario';
+  debtRadio.value = 'debt';
+  debtRadio.checked = true;
+  debtRadio.className = 'hidden';
+  form.append(debtRadio);
+  const title = document.querySelector('#crmPageTitle');
+  const eyebrow = document.querySelector('#saleOverviewEyebrow');
+  const overviewTitle = document.querySelector('#saleOverviewTitle');
+  const overviewText = document.querySelector('#saleOverviewText');
+  if (title) title.textContent = 'Продажа в долг';
+  if (eyebrow) eyebrow.textContent = 'Отдельный режим';
+  if (overviewTitle) overviewTitle.textContent = 'Оформление продажи в долг';
+  if (overviewText) overviewText.textContent = 'Используйте этот раздел только в исключительных случаях.';
+}
 
 async function boot() {
   bindLogin();
   const session = await fetch('/api/crm/session').then((response) => response.json()).catch(() => ({ user: null }));
   if (!session.user) {
+    await loadLoginUsers();
     crmLoginScreen.classList.remove('hidden');
     appPreloader.classList.add('hidden');
     return;
@@ -158,8 +212,9 @@ async function enterCrm(user) {
   applyRoleAccess(user);
   crmLoginScreen.classList.add('hidden');
   const requestedPage = getRequestedPage();
-  if (!['admin', 'owner', 'employee'].includes(user.role)) {
-    window.location.href = requestedPage || '/report.html';
+  const requiredPermission = debtSaleMode ? 'debtSale' : 'sales';
+  if (!hasCrmPermission(requiredPermission)) {
+    window.location.href = requestedPage || getDefaultCrmPage(user);
     return;
   }
   if (requestedPage && requestedPage !== '/' && requestedPage !== '/sales.html') {
@@ -169,6 +224,26 @@ async function enterCrm(user) {
   if (!appInitialized) {
     appInitialized = true;
     await initializeSalesApp();
+  }
+}
+
+async function loadLoginUsers() {
+  const select = document.querySelector('#crmLogin');
+  try {
+    const response = await fetch('/api/crm/login-users');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Не удалось загрузить сотрудников.');
+    select.innerHTML = '<option value="">Выберите сотрудника</option>';
+    for (const user of data.users || []) {
+      const option = document.createElement('option');
+      option.value = user.id;
+      option.textContent = `${user.name}${user.passwordSet ? '' : ' (пароль не задан)'}`;
+      option.disabled = !user.passwordSet;
+      select.append(option);
+    }
+  } catch (error) {
+    select.innerHTML = '<option value="">Сотрудники недоступны</option>';
+    crmLoginStatus.textContent = error.message;
   }
 }
 
@@ -255,8 +330,14 @@ form.addEventListener('change', (event) => {
 });
 
 paymentTypeSelect.addEventListener('change', () => {
+  renderSecondPaymentTypes();
   updateCalculation();
   renderProductResults();
+  scheduleDraftSave();
+});
+
+secondPaymentTypeSelect.addEventListener('change', () => {
+  updateCalculation();
   scheduleDraftSave();
 });
 
@@ -273,6 +354,7 @@ employeeSelect.addEventListener('change', () => {
 });
 
 storeSelect.addEventListener('change', () => {
+  loadProducts(fields.productSearch.value);
   updateCalculation();
 });
 
@@ -364,6 +446,29 @@ fields.customerPhone.addEventListener('input', () => {
   scheduleLoyaltyCustomerLoad();
 });
 
+fields.deliveryEnabled.addEventListener('change', () => {
+  if (fields.deliveryEnabled.checked) {
+    setDefaultDeliverySchedule();
+    if (!fields.deliveryAddress.value.trim()) fields.deliveryAddress.value = fields.customerAddress.value.trim();
+  }
+  renderDeliveryFields();
+  renderOrderItems();
+  scheduleDraftSave();
+});
+
+fields.customerAddress.addEventListener('input', () => {
+  if (fields.deliveryEnabled.checked && !fields.deliveryAddress.dataset.edited) {
+    fields.deliveryAddress.value = fields.customerAddress.value;
+  }
+});
+fields.deliveryAddress.addEventListener('input', () => { fields.deliveryAddress.dataset.edited = 'true'; });
+
+receiptPhotoInput.addEventListener('change', renderReceiptPhotoPreview);
+clearReceiptPhotoButton.addEventListener('click', () => {
+  receiptPhotoInput.value = '';
+  renderReceiptPhotoPreview();
+});
+
 for (const radio of document.querySelectorAll('input[name="customerMode"]')) {
   radio.addEventListener('change', () => {
     renderCustomerMode();
@@ -427,6 +532,8 @@ form.addEventListener('submit', async (event) => {
     validateLoyaltyBeforeSubmit();
 
     const payload = getPayload();
+    setStatus('Подготавливаю фото чека...', '');
+    payload.receiptPhoto = await prepareReceiptPhoto();
     payload.requestKey = crypto.randomUUID();
     const response = await fetch('/api/orders', {
       method: 'POST',
@@ -441,11 +548,17 @@ form.addEventListener('submit', async (event) => {
     const documentName = data.document?.name ? ` №${data.document.name}` : '';
     const documentTitle = getDocumentTitle(data.document?.type);
     const paymentText = data.document?.payment?.name ? ` Входящий платеж №${data.document.payment.name} создан.` : '';
+    const deliveryText = data.delivery ? ' Доставка добавлена в расписание.' : '';
+    const deliveryErrorText = data.deliveryError ? ` Внимание: доставка не сохранена (${data.deliveryError}).` : '';
+    const telegramText = data.telegramReceipt?.sent ? ' Фото чека отправлено в Telegram.' : '';
+    const telegramErrorText = data.telegramReceipt?.error ? ` Внимание: фото не отправлено (${data.telegramReceipt.error}).` : '';
     const loyaltyText = getLoyaltyResultText(data.loyalty);
     lastCreatedOrder = { ...data, requestPayload: payload };
     clearDraft();
-    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${loyaltyText}`);
-    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${loyaltyText}`, 'success');
+    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${telegramText}${telegramErrorText}${loyaltyText}`);
+    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${telegramText}${telegramErrorText}${loyaltyText}`, data.deliveryError || data.telegramReceipt?.error ? 'error' : 'success');
+    receiptPhotoInput.value = '';
+    renderReceiptPhotoPreview();
     await loadLoyaltyCustomer();
   } catch (error) {
     setStatus(error.message, 'error');
@@ -511,6 +624,10 @@ async function loadProducts(search = '', options = {}) {
   const params = new URLSearchParams();
   if (search.trim()) {
     params.set('search', search.trim());
+  }
+  const selectedStore = getSelectedStore();
+  if (selectedStore?.storeHref) {
+    params.set('storeHref', selectedStore.storeHref);
   }
 
   try {
@@ -596,6 +713,10 @@ function renderProductResults(message = '') {
       parts.push(`Код: ${product.code}`);
     }
     parts.push(formatSom(product.price || 0));
+    if (Number.isFinite(Number(product.stock))) {
+      const stock = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(product.stock));
+      parts.push(`Остаток в ${branches[selectedBranch] || getSelectedStore()?.name || 'складе'}: ${stock} шт`);
+    }
     metaLine.textContent = parts.join(' · ');
 
     button.append(title, metaLine);
@@ -678,6 +799,8 @@ function addProductToOrder(product) {
     productPrice: product?.price || 0,
     priceManual: false,
     productCost: product?.cost || 0,
+    productCode: product?.code || '',
+    deliverySelected: true,
     quantity: 1
   });
   renderOrderItems();
@@ -696,6 +819,7 @@ function renderOrderItems() {
   for (const [index, item] of orderItems.entries()) {
     const row = document.createElement('div');
     row.className = 'item-row';
+    row.classList.toggle('delivery-active', fields.deliveryEnabled.checked);
 
     const productInfo = document.createElement('div');
     productInfo.className = 'item-product-info';
@@ -734,6 +858,19 @@ function renderOrderItems() {
     });
     quantityLabel.append(quantityTitle, quantityInput);
 
+    const deliveryLabel = document.createElement('label');
+    deliveryLabel.className = `item-delivery${fields.deliveryEnabled.checked ? '' : ' hidden'}`;
+    const deliveryInput = document.createElement('input');
+    deliveryInput.type = 'checkbox';
+    deliveryInput.checked = item.deliverySelected !== false;
+    deliveryInput.addEventListener('change', () => {
+      item.deliverySelected = deliveryInput.checked;
+      scheduleDraftSave();
+    });
+    const deliveryTitle = document.createElement('span');
+    deliveryTitle.textContent = 'Доставка';
+    deliveryLabel.append(deliveryInput, deliveryTitle);
+
     const remove = document.createElement('button');
     remove.className = 'remove-item';
     remove.type = 'button';
@@ -745,7 +882,7 @@ function renderOrderItems() {
       scheduleDraftSave();
     });
 
-    row.append(productInfo, priceLabel, quantityLabel, remove);
+    row.append(productInfo, priceLabel, quantityLabel, deliveryLabel, remove);
     itemsList.append(row);
   }
 }
@@ -770,6 +907,28 @@ function renderPaymentTypes() {
   }
   renderPrepaymentMethods();
   applyPaymentScenario();
+}
+
+function renderSecondPaymentTypes() {
+  const currentHref = secondPaymentTypeSelect.value;
+  const primaryHref = paymentTypeSelect.value;
+  const options = paymentTypes.filter((paymentType) =>
+    isBankScenarioPaymentType(paymentType) && paymentType.href !== primaryHref
+  );
+  secondPaymentTypeSelect.innerHTML = '';
+  const emptyOption = document.createElement('option');
+  emptyOption.value = '';
+  emptyOption.textContent = 'Выберите второй банк';
+  secondPaymentTypeSelect.append(emptyOption);
+  for (const paymentType of options) {
+    const option = document.createElement('option');
+    option.value = paymentType.href;
+    option.textContent = paymentType.name;
+    secondPaymentTypeSelect.append(option);
+  }
+  if (options.some((paymentType) => paymentType.href === currentHref)) {
+    secondPaymentTypeSelect.value = currentHref;
+  }
 }
 
 function renderPrepaymentMethods() {
@@ -814,21 +973,30 @@ function applyPaymentScenario() {
   fields.cashPrepaymentField.classList.toggle('hidden', scenario !== 'mixed' && scenario !== 'debt');
   fields.prepaymentMethodField.classList.toggle('hidden', scenario !== 'mixed' && scenario !== 'debt');
   fields.paymentTypeField.classList.toggle('hidden', scenario === 'cash' || scenario === 'debt');
+  fields.secondPaymentTypeField.classList.toggle('hidden', scenario !== 'mixed');
+  fields.secondBankAmountField.classList.toggle('hidden', scenario !== 'mixed');
+  fields.paymentTypeFieldLabel.textContent = scenario === 'mixed' ? 'Банк №1 (оставшаяся сумма)' : 'Тип оплаты';
 
   if (scenario === 'cash') {
     fields.cashPrepayment.value = '0';
     fields.prepaymentMethod.value = 'Наличными';
     selectPaymentType(findCashPaymentType());
+    fields.secondBankAmount.value = '0';
+    secondPaymentTypeSelect.value = '';
     return;
   }
 
   if (scenario === 'debt') {
     selectPaymentType(findDebtPaymentType());
+    fields.secondBankAmount.value = '0';
+    secondPaymentTypeSelect.value = '';
     return;
   }
 
   if (scenario === 'bank') {
     fields.cashPrepayment.value = '0';
+    fields.secondBankAmount.value = '0';
+    secondPaymentTypeSelect.value = '';
   }
 
   const selected = getSelectedPaymentType();
@@ -836,6 +1004,7 @@ function applyPaymentScenario() {
   if (!selected || !visiblePaymentTypes.some((paymentType) => paymentType.href === selected.href)) {
     selectPaymentType(visiblePaymentTypes[0]);
   }
+  renderSecondPaymentTypes();
 }
 
 function renderEmployees() {
@@ -872,13 +1041,18 @@ function renderStores() {
 function initBranchSelection() {
   app.classList.add('hidden');
   const branchFromUrl = new URLSearchParams(window.location.search).get('branch');
-  if (branches[branchFromUrl]) {
+  if (branches[branchFromUrl] && canUseBranch(branchFromUrl)) {
     selectBranch(branchFromUrl);
+    return;
+  }
+  const availableBranches = Object.keys(branches).filter(canUseBranch);
+  if (availableBranches.length === 1) {
+    selectBranch(availableBranches[0]);
   }
 }
 
 function selectBranch(branchKey) {
-  if (!branches[branchKey]) return;
+  if (!branches[branchKey] || !canUseBranch(branchKey)) return;
   selectedBranch = branchKey;
   applyBranchStore();
   branchScreen.classList.add('hidden');
@@ -891,6 +1065,9 @@ function selectBranch(branchKey) {
   branchCancelButton?.classList.add('hidden');
   updateCrmProgress();
   scheduleDraftSave();
+  if (productsReady) {
+    loadProducts(fields.productSearch.value);
+  }
 }
 
 function applyBranchStore() {
@@ -1273,6 +1450,17 @@ function validateBeforeSubmit() {
   if (!getSelectedPaymentType()) {
     throw new Error('Выберите тип оплаты.');
   }
+  const receiptFile = receiptPhotoInput.files?.[0];
+  if (!receiptFile) {
+    receiptPhotoInput.focus();
+    throw new Error('Добавьте фотографию чека. Это обязательное поле.');
+  }
+  if (!receiptFile.type.startsWith('image/')) throw new Error('Файл чека должен быть изображением.');
+  if (receiptFile.size > 15 * 1024 * 1024) throw new Error('Фото чека слишком большое. Максимум 15 МБ.');
+  if (getPaymentScenario() === 'mixed' && parseMoney(fields.secondBankAmount.value || 0) > 0 && !getSelectedSecondPaymentType()) {
+    fields.secondPaymentType.focus();
+    throw new Error('Выберите второй банк для смешанной оплаты.');
+  }
 
   const mode = getCustomerMode();
   if (mode === 'new') {
@@ -1291,6 +1479,57 @@ function validateBeforeSubmit() {
   if (mode === 'existing' && !getSelectedCustomer()) {
     throw new Error('Выберите старого клиента из списка или добавьте нового.');
   }
+  if (fields.deliveryEnabled.checked) {
+    if (!normalizePhone(fields.customerPhone.value)) {
+      fields.customerPhone.focus();
+      throw new Error('Для доставки укажите номер телефона клиента.');
+    }
+    if (!fields.deliveryDate.value || !fields.deliveryTime.value) {
+      fields.deliveryDate.focus();
+      throw new Error('Укажите дату и время доставки.');
+    }
+    if (!fields.deliveryAddress.value.trim()) {
+      fields.deliveryAddress.focus();
+      throw new Error('Укажите адрес доставки.');
+    }
+    if (!orderItems.some((item) => item.deliverySelected !== false)) {
+      throw new Error('Выберите хотя бы один товар для доставки.');
+    }
+  }
+}
+
+function renderReceiptPhotoPreview() {
+  const file = receiptPhotoInput.files?.[0];
+  receiptPhotoPreview.classList.toggle('hidden', !file);
+  if (!file) {
+    receiptPhotoImage.removeAttribute('src');
+    receiptPhotoName.textContent = '';
+    return;
+  }
+  receiptPhotoName.textContent = file.name || 'Фото чека';
+  receiptPhotoImage.src = URL.createObjectURL(file);
+}
+
+async function prepareReceiptPhoto() {
+  const file = receiptPhotoInput.files?.[0];
+  if (!file) throw new Error('Добавьте фотографию чека.');
+  const image = await createImageBitmap(file);
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.width * scale));
+  canvas.height = Math.max(1, Math.round(image.height * scale));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  image.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.78));
+  if (!blob) throw new Error('Не удалось обработать фотографию чека.');
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Не удалось прочитать фотографию чека.'));
+    reader.readAsDataURL(blob);
+  });
+  return { name: `receipt-${Date.now()}.jpg`, mimeType: 'image/jpeg', data: String(dataUrl).split(',')[1] || '' };
 }
 
 async function updateCalculation() {
@@ -1389,20 +1628,47 @@ function closeBranchSelection() {
 }
 
 function applyRoleAccess(user) {
-  const roleNames = { admin: 'Администратор', owner: 'Владелец', accountant: 'Бухгалтер', employee: 'Сотрудник' };
+  const roleNames = { admin: 'Главный администратор', owner: 'Владелец', manager: 'Менеджер', seller: 'Продавец', logistics: 'Логистика', accountant: 'Бухгалтер', employee: 'Сотрудник' };
   const initials = String(user.name || user.login || 'OR').split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
   document.querySelector('#sidebarUserName').textContent = user.name;
   document.querySelector('#sidebarUserRole').textContent = roleNames[user.role] || user.role;
   document.querySelector('#topUserName').textContent = user.name;
   document.querySelector('#profileInitials').textContent = initials;
-  document.querySelectorAll('[data-roles]').forEach((element) => {
-    const roles = String(element.dataset.roles || '').split(/\s+/);
-    element.classList.toggle('hidden', !roles.includes(user.role));
+  document.querySelectorAll('[data-permission]').forEach((element) => {
+    element.classList.toggle('hidden', !hasCrmPermission(element.dataset.permission));
+  });
+  document.querySelectorAll('[data-branch]').forEach((element) => {
+    element.classList.toggle('hidden', !canUseBranch(element.dataset.branch));
   });
 }
 
+function hasCrmPermission(permission) {
+  return Array.isArray(currentCrmUser?.permissions) && currentCrmUser.permissions.includes(permission);
+}
+
+function canUseBranch(branchKey) {
+  return Array.isArray(currentCrmUser?.branches) && currentCrmUser.branches.includes(branchKey);
+}
+
+function getDefaultCrmPage(user) {
+  const pages = [
+    ['sales', '/sales.html'],
+    ['debtSale', '/debt-sale.html'],
+    ['deliveries', '/deliveries.html'],
+    ['reports', '/report.html'],
+    ['expenses', '/expenses.html'],
+    ['payroll', '/payroll.html'],
+    ['priceFormula', '/price-formula.html'],
+    ['audit', '/audit.html'],
+    ['users', '/users.html'],
+    ['about', '/about.html']
+  ];
+  return pages.find(([permission]) => user.permissions?.includes(permission))?.[1] || '/about.html';
+}
+
 function getDraftKey() {
-  return `mysrsSaleDraft:${currentCrmUser?.login || 'anonymous'}`;
+  const mode = debtSaleMode ? 'debt' : 'regular';
+  return `mysrsSaleDraft:${mode}:${currentCrmUser?.login || 'anonymous'}`;
 }
 
 function scheduleDraftSave() {
@@ -1419,6 +1685,8 @@ function saveDraft() {
     if (!element.name || element.name === 'productSearch') continue;
     if (element.type === 'radio') {
       if (element.checked) values[element.name] = element.value;
+    } else if (element.type === 'checkbox') {
+      values[element.name] = element.checked;
     } else if (element.type !== 'submit' && element.type !== 'button') {
       values[element.name] = element.value;
     }
@@ -1453,11 +1721,16 @@ function restoreDraft() {
     const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
     for (const control of controls) {
       if (control.type === 'radio') control.checked = control.value === value;
+      else if (control.type === 'checkbox') control.checked = Boolean(value);
       else control.value = value;
     }
   }
+  renderDeliveryFields();
   renderOrderItems();
   applyPaymentScenario();
+  if (draft.values?.secondPaymentType) {
+    secondPaymentTypeSelect.value = draft.values.secondPaymentType;
+  }
   renderCustomerMode();
   draftStatus.textContent = `Черновик восстановлен`;
   setStatus('Восстановлен незавершенный черновик продажи.', 'success');
@@ -1525,13 +1798,14 @@ function renderEmptyCalculation() {
   };
   renderSummary(summary, emptyData);
   renderSummary(compactSummary, emptyData);
+  renderBankSplit(null);
 }
 
 function renderCalculation(data) {
   const summaryData = {
     baseTotal: data.baseTotal,
     productLabel: data.items?.length > 1 ? `${data.items.length} товара` : data.items?.[0]?.productName || 'Выберите товар',
-    paymentType: data.paymentType,
+    paymentType: data.paymentLabel || data.paymentType,
     prepaidTotal: data.prepaidTotal,
     loyaltyRedemption: data.loyaltyRedemption || 0,
     installmentBaseLabel: getRemainderLabel(data),
@@ -1543,6 +1817,17 @@ function renderCalculation(data) {
   };
   renderSummary(summary, summaryData);
   renderSummary(compactSummary, summaryData);
+  renderBankSplit(data);
+}
+
+function renderBankSplit(data) {
+  const visible = getPaymentScenario() === 'mixed';
+  fields.mixedBankSplit.classList.toggle('hidden', !visible);
+  if (!visible) return;
+  fields.primaryBankPreviewLabel.textContent = data?.paymentType || getSelectedPaymentType()?.name || 'Банк №1';
+  fields.primaryBankAmountPreview.textContent = formatSom(data?.primaryBankAmount || 0);
+  fields.secondBankPreviewLabel.textContent = data?.secondPaymentType || getSelectedSecondPaymentType()?.name || 'Банк №2';
+  fields.secondBankAmountPreview.textContent = formatSom(data?.secondBankAmount || 0);
 }
 
 function renderSummary(target, data) {
@@ -1571,28 +1856,60 @@ function renderSummary(target, data) {
 
 function getPayload() {
   const selectedPaymentType = getSelectedPaymentType();
+  const secondPaymentType = getSelectedSecondPaymentType();
   const selectedEmployee = getSelectedEmployee();
+  const deliveryEnabled = fields.deliveryEnabled.checked;
+  const deliveryDateTime = deliveryEnabled && fields.deliveryDate.value && fields.deliveryTime.value
+    ? new Date(`${fields.deliveryDate.value}T${fields.deliveryTime.value}:00`).toISOString()
+    : '';
   return {
     items: orderItems,
     cashPrepayment: fields.cashPrepayment.value,
     prepaymentMethodName: fields.prepaymentMethod.value,
     transferPrepayment: fields.transferPrepayment.value,
+    paymentScenario: getPaymentScenario(),
     loyaltyRedemption: fields.loyaltyRedemption?.value || '0',
     paymentTypeName: selectedPaymentType?.name || '',
     paymentTypeHref: selectedPaymentType?.href || '',
     paymentTypeRate: selectedPaymentType?.rate ?? 0,
     paymentTypeComment: selectedPaymentType?.comment || '',
+    secondPaymentTypeName: secondPaymentType?.name || '',
+    secondPaymentTypeHref: secondPaymentType?.href || '',
+    secondPaymentTypeRate: secondPaymentType?.rate ?? 0,
+    secondPaymentTypeComment: secondPaymentType?.comment || '',
+    secondBankAmount: fields.secondBankAmount.value,
     employeeName: selectedEmployee?.name || '',
     employeeHref: selectedEmployee?.href || '',
     retailStoreName: getSelectedStore()?.name || '',
+    branchName: branches[selectedBranch] || getSelectedStore()?.name || '',
     retailStoreHref: getSelectedStore()?.href || '',
     storeHref: getSelectedStore()?.storeHref || '',
     customerMode: getCustomerMode(),
     customerHref: getSelectedCustomer()?.href || '',
     customerName: fields.customerName.value.trim(),
     customerPhone: fields.customerPhone.value.trim(),
-    customerAddress: fields.customerAddress.value.trim()
+    customerAddress: fields.customerAddress.value.trim(),
+    delivery: {
+      enabled: deliveryEnabled,
+      scheduledAt: deliveryDateTime,
+      address: fields.deliveryAddress.value.trim(),
+      notes: fields.deliveryNotes.value.trim(),
+      items: deliveryEnabled
+        ? orderItems.filter((item) => item.deliverySelected !== false).map((item) => ({ name: item.productName, code: item.productCode || '', quantity: item.quantity }))
+        : []
+    }
   };
+}
+
+function renderDeliveryFields() {
+  fields.deliveryFields.classList.toggle('hidden', !fields.deliveryEnabled.checked);
+}
+
+function setDefaultDeliverySchedule() {
+  const next = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  if (!fields.deliveryDate.value) fields.deliveryDate.value = next.toISOString().slice(0, 10);
+  if (!fields.deliveryTime.value) fields.deliveryTime.value = '12:00';
+  fields.deliveryDate.min = new Date().toISOString().slice(0, 10);
 }
 
 function parseMoney(value) {
@@ -1608,6 +1925,10 @@ function normalizePhone(value) {
 
 function getSelectedPaymentType() {
   return paymentTypes.find((paymentType) => paymentType.href === paymentTypeSelect.value);
+}
+
+function getSelectedSecondPaymentType() {
+  return paymentTypes.find((paymentType) => paymentType.href === secondPaymentTypeSelect.value);
 }
 
 function getVisiblePaymentTypes() {
@@ -1755,7 +2076,7 @@ function renderPrintReceipt(data) {
   const buyer = getPrintBuyer(payload);
   const storeName = payload.retailStoreName || payload.storeName || '';
   const employeeName = payload.employeeName || '';
-  const paymentType = calculation.paymentType || payload.paymentTypeName || '';
+  const paymentType = calculation.paymentLabel || calculation.paymentType || payload.paymentTypeName || '';
   const paid = Number(calculation.prepaidTotal || calculation.finalTotal || 0);
   const unpaid = Math.max(0, total - paid);
   const loyalty = data?.loyalty || {};

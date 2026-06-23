@@ -1,17 +1,24 @@
 const roleLabels = {
-  admin: 'Администратор',
+  admin: 'Главный администратор',
   owner: 'Владелец',
+  manager: 'Менеджер',
+  seller: 'Продавец',
+  logistics: 'Логистика',
   accountant: 'Бухгалтер',
   employee: 'Сотрудник'
 };
 
 const navigation = [
-  { id: 'sales', href: '/sales.html', label: 'Продажи', roles: ['admin', 'owner', 'employee'] },
-  { id: 'reports', href: '/report.html', label: 'Отчетность', roles: ['admin', 'owner', 'accountant', 'employee'] },
-  { id: 'payroll', href: '/payroll.html', label: 'Зарплаты', roles: ['admin', 'owner'] },
-  { id: 'priceFormula', href: '/price-formula.html', label: 'Расчет цен', roles: ['admin', 'owner', 'accountant'] },
-  { id: 'audit', href: '/audit.html', label: 'Журнал действий', roles: ['admin', 'owner'] },
-  { id: 'about', href: '/about.html', label: 'О системе', roles: ['admin', 'owner', 'accountant', 'employee'] }
+  { id: 'sales', href: '/sales.html', label: 'Продажи', permission: 'sales' },
+  { id: 'debtSale', href: '/debt-sale.html', label: 'Продать в долг', permission: 'debtSale' },
+  { id: 'deliveries', href: '/deliveries.html', label: 'Доставки', permission: 'deliveries' },
+  { id: 'reports', href: '/report.html', label: 'Отчетность', permission: 'reports' },
+  { id: 'expenses', href: '/expenses.html', label: 'Расходы', permission: 'expenses' },
+  { id: 'payroll', href: '/payroll.html', label: 'Зарплаты', permission: 'payroll' },
+  { id: 'priceFormula', href: '/price-formula.html', label: 'Расчет цен', permission: 'priceFormula' },
+  { id: 'audit', href: '/audit.html', label: 'Журнал действий', permission: 'audit' },
+  { id: 'users', href: '/users.html', label: 'Сотрудники и доступ', permission: 'users' },
+  { id: 'about', href: '/about.html', label: 'О системе', permission: 'about' }
 ];
 
 export async function initCrmShell({ page, allowedRoles }) {
@@ -25,8 +32,11 @@ export async function initCrmShell({ page, allowedRoles }) {
     return null;
   }
 
-  if (!allowedRoles.includes(user.role)) {
-    window.location.replace(getDefaultPage(user.role));
+  const requiredPermission = page === 'prices'
+    ? 'priceFormula'
+    : navigation.find((item) => item.id === page)?.permission || page;
+  if (!hasPermission(user, requiredPermission)) {
+    window.location.replace(getDefaultPage(user));
     return null;
   }
 
@@ -45,7 +55,7 @@ function renderShell(user, page) {
     .slice(0, 2)
     .toUpperCase();
   const links = navigation
-    .filter((item) => item.roles.includes(user.role))
+    .filter((item) => hasPermission(user, item.permission))
     .map((item) => `<a class="${item.id === page ? 'active' : ''}" href="${item.href}">${item.label}</a>`)
     .join('');
 
@@ -177,9 +187,12 @@ function syncSharedSettingsControls() {
   });
 }
 
-function getDefaultPage(role) {
-  if (role === 'accountant') return '/report.html';
-  return '/sales.html';
+function getDefaultPage(user) {
+  return navigation.find((item) => hasPermission(user, item.permission))?.href || '/';
+}
+
+function hasPermission(user, permission) {
+  return Array.isArray(user?.permissions) && user.permissions.includes(permission);
 }
 
 function escapeHtml(value) {

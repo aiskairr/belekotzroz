@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Доставки | Ordo CRM</title>
+    <link rel="stylesheet" href="/deliveries.css?v=20260623">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main id="deliveriesApp" class="deliveries-app hidden">
+      <header class="page-heading">
+        <div><p class="eyebrow">Логистика магазина</p><h1>Доставки</h1><p>Товары, адреса, клиенты и время доставки по филиалам.</p></div>
+        <button id="refreshButton" type="button">Обновить</button>
+      </header>
+
+      <form id="deliveryFilters" class="filters">
+        <label><span>С даты</span><input id="dateFrom" type="date"></label>
+        <label><span>По дату</span><input id="dateTo" type="date"></label>
+        <label><span>Статус</span><select id="statusFilter"><option value="">Все статусы</option><option value="new">Новая</option><option value="assigned">Назначена</option><option value="in_transit">В пути</option><option value="delivered">Доставлена</option><option value="cancelled">Отменена</option></select></label>
+        <label class="search"><span>Поиск</span><input id="searchInput" type="search" placeholder="Клиент, телефон, адрес или товар"></label>
+        <button type="submit">Показать</button>
+      </form>
+
+      <section class="summary-grid">
+        <article><span>Всего</span><strong id="totalCount">0</strong></article>
+        <article><span>Новые</span><strong id="newCount">0</strong></article>
+        <article><span>В пути</span><strong id="transitCount">0</strong></article>
+        <article><span>Доставлены</span><strong id="deliveredCount">0</strong></article>
+      </section>
+
+      <section class="deliveries-section">
+        <div class="section-title"><h2>Расписание</h2><p id="deliveryStatus">Загрузка...</p></div>
+        <div id="deliveryList" class="delivery-list"></div>
+      </section>
+    </main>
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script src="/deliveries.js?v=20260623" type="module"></script>
+  </body>
+</html>

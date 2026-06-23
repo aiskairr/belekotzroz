@@ -15,6 +15,7 @@ input:disabled, select:disabled { background: #eef2f6; color: #8a96a7; }
 .page-heading > div > p:last-child { margin-top: 7px; color: #637086; }
 .eyebrow { margin-bottom: 6px !important; color: var(--ordo-accent-dark, #1d4ed8); font-size: 13px; font-weight: 900; text-transform: uppercase; }
 .heading-actions { display: flex; gap: 10px; }
+.heading-actions .expense-button { background: #16805b; }
 .filters, .summary-grid article, .payroll-card { border: 1px solid #d7dee8; border-radius: 8px; background: #fff; box-shadow: 0 14px 36px rgba(32,48,72,.06); }
 .filters { display: grid; grid-template-columns: 190px 190px minmax(280px, 1fr) auto; gap: 12px; align-items: end; padding: 16px; }
 .filters label, .search-field { display: grid; gap: 6px; color: #56647a; font-size: 13px; font-weight: 750; }
@@ -45,22 +46,52 @@ td select, td input { min-width: 120px; }
 .percent-input { display: flex; align-items: center; gap: 5px; }
 .percent-input span { color: #69768a; font-weight: 800; }
 .number { text-align: right; white-space: nowrap; }
+.sales-detail-button { min-height: 32px; border: 1px solid #bdd2e9; background: #f4f8fd; color: #174b7f; padding: 5px 9px; font-size: 12px; white-space: nowrap; }
 .total-result strong { color: var(--ordo-accent-dark, #1d4ed8); }
 .error { color: #b42318; }
+.modal-open { overflow: hidden; }
+.sales-modal { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; background: rgba(15, 23, 42, .58); padding: 20px; }
+.sales-modal-card { width: min(1050px, 100%); max-height: calc(100vh - 40px); overflow: hidden; border-radius: 9px; background: #f5f7fa; box-shadow: 0 30px 90px rgba(15,23,42,.3); }
+.sales-modal-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; border-bottom: 1px solid #dce3eb; background: #fff; padding: 20px 22px; }
+.sales-modal-card h2, .sales-modal-card header p { margin: 0; }
+.sales-modal-card h2 { margin: 3px 0 5px; font-size: 25px; }
+.sales-modal-card header p:last-child { color: #667085; font-size: 13px; }
+.modal-close { display: grid; width: 40px; min-height: 40px; place-items: center; border: 0; border-radius: 50%; background: #eef2f6; color: #344054; padding: 0; font-size: 25px; }
+.sales-modal-body { display: grid; gap: 12px; max-height: calc(100vh - 160px); overflow: auto; padding: 16px; }
+.sale-document { overflow: hidden; border: 1px solid #d8e0e9; border-radius: 7px; background: #fff; }
+.sale-document-head { display: grid; grid-template-columns: 1fr 1.25fr auto; gap: 18px; align-items: center; background: #243b55; color: #fff; padding: 13px 15px; }
+.sale-document-head > div { display: grid; gap: 3px; min-width: 0; }
+.sale-document-head span { overflow: hidden; color: #cbd5e1; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.sale-document-head strong { font-size: 14px; }
+.sale-document-head .negative-profit { color: #ffb4ac; }
+.sale-document-head a { border: 1px solid rgba(255,255,255,.35); border-radius: 5px; color: #fff; padding: 8px 10px; font-size: 12px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+.sale-products { display: grid; }
+.sale-products > div { display: grid; grid-template-columns: minmax(260px, 1fr) 80px 120px 130px; gap: 12px; align-items: center; border-top: 1px solid #e5eaf0; padding: 10px 14px; font-size: 13px; }
+.sale-products > div:first-child { border-top: 0; }
+.sale-products > div > span:first-child { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.sale-products b { min-width: 66px; color: #667085; font-size: 11px; }
+.sale-products > div > span:not(:first-child), .sale-products > div > strong { text-align: right; white-space: nowrap; }
+.sale-products p, .sales-empty { margin: 0; color: #667085; padding: 28px; text-align: center; }
 
 @media (max-width: 900px) {
   .payroll-panel { width: calc(100% - 24px); margin-top: 18px; }
   .page-heading { align-items: stretch; flex-direction: column; }
   .heading-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .heading-actions .expense-button { grid-column: 1 / -1; }
   .filters { grid-template-columns: 1fr 1fr; }
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .summary-primary { grid-column: 1 / -1; }
   .card-title { align-items: stretch; flex-direction: column; }
+  .sales-modal { padding: 8px; }
+  .sales-modal-card { max-height: calc(100vh - 16px); }
+  .sale-document-head { grid-template-columns: 1fr; gap: 9px; }
+  .sale-products > div { grid-template-columns: 1fr auto; }
+  .sale-products > div > span:first-child { grid-column: 1 / -1; }
 }
 
 @media print {
   body { background: #fff; padding: 0 !important; }
-  .shared-crm-sidebar, .shared-crm-topbar, .heading-actions, .filters, .search-field { display: none !important; }
+  .shared-crm-sidebar, .shared-crm-topbar, .heading-actions, .filters, .search-field, .sales-modal { display: none !important; }
   .payroll-panel { width: 100%; margin: 0; }
   .page-heading { margin-bottom: 12px; }
   .summary-grid { grid-template-columns: repeat(5, 1fr); }

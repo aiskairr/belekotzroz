@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Сотрудники и доступ | Ordo CRM</title>
+    <link rel="stylesheet" href="/users.css?v=20260623-role-hierarchy">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main id="usersApp" class="users-app hidden">
+      <header class="page-heading">
+        <div><p class="eyebrow">Управление доступом</p><h1>Сотрудники</h1><p>Роли, филиалы, разрешенные разделы и пароли входа.</p></div>
+        <button id="refreshUsers" class="secondary" type="button">Обновить</button>
+      </header>
+      <section class="notice"><strong>Важно:</strong> новый пароль применяется сразу. Уже открытая сессия сотрудника обновится после повторного входа.</section>
+      <section class="users-section">
+        <div class="section-heading"><div><h2>Учетные записи</h2><p id="usersStatus">Загрузка...</p></div></div>
+        <div id="usersList" class="users-list"></div>
+      </section>
+    </main>
+    <div id="usersToast" class="toast hidden" role="status"></div>
+    <script src="/users.js?v=20260623-role-hierarchy" type="module"></script>
+  </body>
+</html>

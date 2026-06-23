@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -58,8 +58,17 @@ const contentTypes = {
 };
 
 const recentOrders = new Map();
+let telegramReceiptChatId = process.env.TELEGRAM_RECEIPT_CHAT_ID || '';
+const productStockCache = new Map();
+const productCostCache = new Map();
+const payrollReportCache = new Map();
+const salesReportCache = new Map();
+const salesReportInflight = new Map();
+let currenciesCache = { value: [], createdAt: 0 };
+let currenciesInflight = null;
+let reportCurrencyExpandSupported = true;
 const reportCookieName = 'mysrs_report_session';
-const crmCookieName = 'mysrs_crm_session';
+const crmCookieName = 'mysrs_crm_session_v2';
 const PRICE_FORMULA_TEMPLATE_START = '[ORDO_PRICE_TEMPLATE]';
 const PRICE_FORMULA_TEMPLATE_END = '[/ORDO_PRICE_TEMPLATE]';
 const PAYROLL_CONFIG_START = '[ORDO_PAYROLL]';
@@ -123,12 +132,33 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/crm/login-users') {
+      const users = await getCrmLoginUsers();
+      sendJson(res, 200, { users });
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/crm/login') {
       const body = await readJson(req);
-      const user = authenticateCrmUser(body.login, body.password);
+      const user = await authenticateCrmUser(body.login, body.password);
       if (!user) throw httpError(401, 'Неверный логин или пароль.');
       setCrmSession(res, user);
       await writeAudit({ user, action: 'login', entity: 'session', description: 'Вход в CRM' });
+      sendJson(res, 200, { user });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/crm/users') {
+      requireCrmPermission(req, 'users');
+      sendJson(res, 200, { users: await getManagedCrmUsers() });
+      return;
+    }
+
+    const crmUserMatch = url.pathname.match(/^\/api\/crm\/users\/([0-9a-f-]{36})$/i);
+    if (crmUserMatch && req.method === 'PUT') {
+      const actor = requireCrmPermission(req, 'users');
+      const user = await updateManagedCrmUser(crmUserMatch[1], await readJson(req), actor);
+      await writeAudit({ actor, user: actor, action: 'crm.user.update', entity: 'crm_user', entityId: user.id, description: `Доступ сотрудника изменен: ${user.name}` });
       sendJson(res, 200, { user });
       return;
     }
@@ -142,14 +172,70 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/audit') {
-      requireCrmRole(req, ['admin', 'owner']);
+      requireCrmPermission(req, 'audit');
       const rows = await readAuditLog(Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 200)));
       sendJson(res, 200, { rows });
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/expenses') {
+      requireCrmPermission(req, 'expenses');
+      const expenses = await getExpenses({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || '',
+        category: url.searchParams.get('category') || ''
+      });
+      sendJson(res, 200, { expenses });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/expenses') {
+      const user = requireCrmPermission(req, 'expenses');
+      const expense = await createExpense(await readJson(req), user);
+      await writeAudit({ user, action: 'expense.create', entity: 'expense', entityId: expense.id, description: `Расход: ${expense.description || expense.subcategory} на ${formatMoney(expense.amount)} сом` });
+      sendJson(res, 201, { expense });
+      return;
+    }
+
+    const expenseMatch = url.pathname.match(/^\/api\/expenses\/([0-9a-f-]{36})$/i);
+    if (expenseMatch && req.method === 'PUT') {
+      const user = requireCrmPermission(req, 'expenses');
+      const expense = await updateExpense(expenseMatch[1], await readJson(req), user);
+      await writeAudit({ user, action: 'expense.update', entity: 'expense', entityId: expense.id, description: `Расход изменен: ${formatMoney(expense.amount)} сом` });
+      sendJson(res, 200, { expense });
+      return;
+    }
+
+    if (expenseMatch && req.method === 'DELETE') {
+      const user = requireCrmPermission(req, 'expenses');
+      await deleteExpense(expenseMatch[1]);
+      await writeAudit({ user, action: 'expense.delete', entity: 'expense', entityId: expenseMatch[1], description: 'Расход удален' });
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/deliveries') {
+      const user = requireCrmPermission(req, 'deliveries');
+      const deliveries = await getDeliveries({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || '',
+        status: url.searchParams.get('status') || ''
+      }, user);
+      sendJson(res, 200, { deliveries });
+      return;
+    }
+
+    const deliveryMatch = url.pathname.match(/^\/api\/deliveries\/([0-9a-f-]{36})$/i);
+    if (deliveryMatch && req.method === 'PATCH') {
+      const user = requireCrmPermission(req, 'deliveries');
+      const delivery = await updateDelivery(deliveryMatch[1], await readJson(req), user);
+      await writeAudit({ user, action: 'delivery.update', entity: 'delivery', entityId: delivery.id, description: `Статус доставки ${delivery.document_name}: ${delivery.status}` });
+      sendJson(res, 200, { delivery });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/config') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       sendJson(res, 200, {
         documentType: process.env.MOYSKLAD_DOCUMENT_TYPE || 'auto',
         loyalty: getLoyaltyConfig()
@@ -158,21 +244,21 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/payment-types') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const paymentTypes = await getMoySkladPaymentTypes();
       sendJson(res, 200, { paymentTypes });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/employees') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const employees = await getMoySkladEmployees();
       sendJson(res, 200, { employees });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/payroll') {
-      requireCrmRole(req, ['admin', 'owner']);
+      requireCrmPermission(req, 'payroll');
       const payroll = await getPayrollReport({
         dateFrom: url.searchParams.get('dateFrom') || '',
         dateTo: url.searchParams.get('dateTo') || ''
@@ -182,11 +268,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/payroll/employees/config') {
-      const user = requireCrmRole(req, ['admin', 'owner']);
+      const user = requireCrmPermission(req, 'payroll');
       const body = await readJson(req);
       const entries = Array.isArray(body.employees) ? body.employees : [body];
       if (!entries.length || entries.length > 100) throw httpError(400, 'Можно сохранить от 1 до 100 сотрудников.');
       const employees = await mapWithConcurrency(entries, 3, updateMoySkladEmployeePayrollConfig);
+      payrollReportCache.clear();
       await writeAudit({
         user,
         action: 'payroll.employees.config',
@@ -199,7 +286,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/stores') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const stores = await getMoySkladStores();
       sendJson(res, 200, { stores });
       return;
@@ -213,7 +300,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/retail-shifts') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const retailStoreHref = url.searchParams.get('retailStoreHref') || '';
       if (!retailStoreHref) {
         throw httpError(400, 'Укажите retailStoreHref.');
@@ -224,15 +311,16 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/products') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const search = url.searchParams.get('search') || '';
-      const products = await getMoySkladProducts(search);
+      const storeHref = url.searchParams.get('storeHref') || '';
+      const products = await getMoySkladProducts(search, storeHref);
       sendJson(res, 200, { products });
       return;
     }
 
     if (req.method === 'GET' && url.pathname === '/api/customers') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const search = url.searchParams.get('search') || '';
       const customers = await getMoySkladCustomers(search);
       sendJson(res, 200, { customers });
@@ -240,7 +328,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/loyalty/customer') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const phone = url.searchParams.get('phone') || '';
       const customer = await getLoyaltyCustomer(phone);
       sendJson(res, 200, { customer, loyalty: getLoyaltyConfig() });
@@ -255,7 +343,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/report/login') {
       const body = await readJson(req);
-      loginReportUser(req, res, body);
+      await loginReportUser(req, res, body);
       return;
     }
 
@@ -266,14 +354,14 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/reports/sales') {
-      requireReportAuth(req);
+      const user = requireReportAuth(req);
       const report = await getSalesReport({
         dateFrom: url.searchParams.get('dateFrom') || '',
         dateTo: url.searchParams.get('dateTo') || '',
         retailStoreHref: url.searchParams.get('retailStoreHref') || '',
         storeHref: url.searchParams.get('storeHref') || ''
       });
-      sendJson(res, 200, report);
+      sendJson(res, 200, sanitizeSalesReportForUser(report, user));
       return;
     }
 
@@ -282,6 +370,8 @@ const server = createServer(async (req, res) => {
       const user = getEffectiveUser(req, 'owner');
       const body = await readJson(req);
       const result = await createReportReturn(body);
+      salesReportCache.clear();
+      payrollReportCache.clear();
       await writeAudit({ user, action: 'return', entity: body.documentType || 'document', entityId: body.documentId, description: `Возврат товара, количество: ${body.quantity || 1}` });
       sendJson(res, 201, result);
       return;
@@ -341,26 +431,40 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/calculate') {
-      requireCrmRole(req, ['admin', 'owner', 'employee']);
+      requireCrmPermission(req, 'sales');
       const body = await readJson(req);
-      sendJson(res, 200, calculate(body));
+      sendJson(res, 200, calculate(await hydrateOrderItemCosts(body)));
       return;
     }
 
     if (req.method === 'POST' && url.pathname === '/api/orders') {
-      const user = requireCrmRole(req, ['admin', 'owner', 'employee']);
       const body = await readJson(req);
+      const user = requireCrmPermission(req, body.paymentScenario === 'debt' ? 'debtSale' : 'sales');
+      assertCrmBranchAccess(user, body.branchName);
       const requestKey = String(body.requestKey || '');
       if (requestKey && recentOrders.has(requestKey)) {
         sendJson(res, 200, recentOrders.get(requestKey));
         return;
       }
 
-      const result = calculate(body);
+      validateTelegramReceiptInput(body.receiptPhoto);
+      const result = calculate(await hydrateOrderItemCosts(body));
       await assertLoyaltyRedemptionAllowed(result, body);
       const document = await createMoySkladDocument(result, body);
+      let delivery = null;
+      let deliveryError = '';
+      if (body.delivery?.enabled) {
+        try {
+          delivery = await createDeliveryRecord(body, document, user);
+        } catch (error) {
+          deliveryError = error.message || 'Не удалось сохранить доставку.';
+        }
+      }
+      payrollReportCache.clear();
+      salesReportCache.clear();
       const loyalty = await applyLoyaltySafely(result, body, document);
-      const payload = { calculation: result, document, loyalty };
+      const telegramReceipt = await sendTelegramReceiptSafely(body.receiptPhoto, result, body, document);
+      const payload = { calculation: result, document, loyalty, delivery, deliveryError, telegramReceipt };
       await writeAudit({
         user,
         action: 'sale.create',
@@ -405,6 +509,9 @@ function calculate(input) {
   const paymentTypeName = String(input.paymentTypeName || input.bank || 'M+ (6 мес)');
   const paymentType = parsePaymentType(paymentTypeName);
   const months = paymentType.months;
+  const secondPaymentTypeName = String(input.secondPaymentTypeName || '').trim();
+  const secondPaymentType = secondPaymentTypeName ? parsePaymentType(secondPaymentTypeName) : { provider: '', months: 0 };
+  const secondBankAmount = toMoney(input.secondBankAmount || 0);
 
   if (!items.length) {
     throw httpError(400, 'Добавьте хотя бы один товар.');
@@ -414,6 +521,15 @@ function calculate(input) {
   }
   if (!Number.isFinite(transferPrepayment) || transferPrepayment < 0) {
     throw httpError(400, 'Предоплата переводом не может быть отрицательной.');
+  }
+  if (!Number.isFinite(secondBankAmount) || secondBankAmount < 0) {
+    throw httpError(400, 'Сумма через второй банк не может быть отрицательной.');
+  }
+  if (secondBankAmount > 0 && !secondPaymentTypeName) {
+    throw httpError(400, 'Выберите второй банк.');
+  }
+  if (secondBankAmount > 0 && secondPaymentTypeName === paymentTypeName) {
+    throw httpError(400, 'Для смешанной оплаты выберите два разных банка.');
   }
   if (loyaltyRedemption > 0 && !getLoyaltyConfig().enabled) {
     throw httpError(400, 'Бонусная система сейчас выключена.');
@@ -428,6 +544,14 @@ function calculate(input) {
     ? rateFromInput
     : rateFromPaymentComment;
   const rate = getPaymentRate(paymentType.provider, months, explicitRate);
+  const secondRateFromInput = Number(input.secondPaymentTypeRate);
+  const secondRateFromComment = parseRateFromComment(input.secondPaymentTypeComment);
+  const secondExplicitRate = Number.isFinite(secondRateFromInput) && secondRateFromInput > 0
+    ? secondRateFromInput
+    : secondRateFromComment;
+  const secondRate = secondPaymentTypeName
+    ? getPaymentRate(secondPaymentType.provider, secondPaymentType.months, secondExplicitRate)
+    : 0;
 
   const baseTotal = roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
   if (loyaltyRedemption > baseTotal) {
@@ -444,19 +568,35 @@ function calculate(input) {
   }
 
   const installmentBase = roundMoney(payableTotal - prepaidTotal);
-  const commission = roundMoney(installmentBase * rate);
+  if (secondBankAmount > installmentBase) {
+    throw httpError(400, 'Сумма через второй банк не может быть больше остатка после оплаты сразу.');
+  }
+  const primaryBankAmount = roundMoney(installmentBase - secondBankAmount);
+  const commission = roundMoney(primaryBankAmount * rate + secondBankAmount * secondRate);
   const finalTotal = payableTotal;
   const netTotal = roundMoney(payableTotal - commission);
   const costTotal = roundMoney(items.reduce((sum, item) => sum + item.costTotal, 0));
   const netProfit = roundMoney(netTotal - costTotal);
-  const monthlyPayment = months > 0 ? roundMoney(installmentBase / months) : 0;
+  const primaryMonthlyPayment = months > 0 ? primaryBankAmount / months : 0;
+  const secondMonthlyPayment = secondPaymentType.months > 0 ? secondBankAmount / secondPaymentType.months : 0;
+  const monthlyPayment = roundMoney(primaryMonthlyPayment + secondMonthlyPayment);
+  const paymentLabel = secondBankAmount > 0
+    ? `${paymentTypeName} + ${secondPaymentTypeName}`
+    : paymentTypeName;
 
   const result = {
     items,
     bank: paymentType.provider,
     paymentType: paymentTypeName,
+    paymentLabel,
     months,
     rate,
+    primaryBankAmount,
+    secondPaymentType: secondPaymentTypeName,
+    secondPaymentTypeHref: String(input.secondPaymentTypeHref || ''),
+    secondMonths: secondPaymentType.months,
+    secondRate,
+    secondBankAmount,
     baseTotal,
     loyaltyRedemption,
     payableTotal,
@@ -736,16 +876,25 @@ function buildDocumentDescription(calculation) {
   const paidAmount = getPaidAmount(calculation);
   const unpaidAmount = getUnpaidAmount(calculation);
   const isDebt = paymentNameLower.includes('долг');
+  const hasSecondBank = Number(calculation.secondBankAmount || 0) > 0;
   const isMixed = paidAmount > 0 && unpaidAmount > 0;
 
-  const lines = isMixed && !isDebt
+  const lines = (isMixed || hasSecondBank) && !isDebt
     ? []
     : [`Тип оплаты: ${paymentName}.`];
 
   if (isDebt) {
-    lines.push(`Оплачено: ${formatMoney(paidAmount)} сом.`);
+    lines.push(`${calculation.prepaymentMethodName}: ${formatMoney(paidAmount)} сом.`);
     lines.push(`Не оплачено: ${formatMoney(unpaidAmount)} сом.`);
     lines.push(`Долг: ${formatMoney(unpaidAmount)} сом.`);
+  } else if (hasSecondBank) {
+    if (paidAmount > 0) {
+      lines.push(`${calculation.prepaymentMethodName}: ${formatMoney(paidAmount)} сом.`);
+    }
+    if (calculation.primaryBankAmount > 0) {
+      lines.push(`${paymentName}: ${formatMoney(calculation.primaryBankAmount)} сом.`);
+    }
+    lines.push(`${calculation.secondPaymentType}: ${formatMoney(calculation.secondBankAmount)} сом.`);
   } else if (isMixed) {
     lines.push(`${calculation.prepaymentMethodName}: ${formatMoney(paidAmount)} сом.`);
     lines.push(`${paymentName}: ${formatMoney(unpaidAmount)} сом.`);
@@ -1124,7 +1273,7 @@ async function getMoySkladCustomers(search) {
   }));
 }
 
-async function getMoySkladProducts(search) {
+async function getMoySkladProducts(search, storeHref = '') {
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const queries = getProductSearchQueries(search);
   const allProducts = [];
@@ -1142,18 +1291,97 @@ async function getMoySkladProducts(search) {
     }
   }
 
-  return allProducts.slice(0, 30).map((product) => ({
-    id: product.id,
-    name: product.name,
-    code: product.code,
-    article: product.article || '',
-    externalCode: product.externalCode || '',
-    barcode: getProductBarcode(product),
-    price: getProductPrice(product),
-    cost: getProductCost(product),
-    href: product.meta.href,
-    type: product.meta.type
-  }));
+  const selectedProducts = allProducts.slice(0, 30);
+  const currencies = await getMoySkladCurrencies(token).catch(() => []);
+  const currenciesByHref = new Map(currencies.map((currency) => [currency.meta?.href, currency]));
+  const stockValues = storeHref
+    ? await mapWithConcurrency(selectedProducts, 6, (product) =>
+        getMoySkladProductStock(token, product.meta?.href || '', storeHref).catch(() => null))
+    : selectedProducts.map(() => null);
+
+  return selectedProducts.map((product, index) => {
+    const cost = getProductCost(product, currenciesByHref);
+    productCostCache.set(product.meta?.href || '', { value: cost, createdAt: Date.now() });
+    return {
+      id: product.id,
+      name: product.name,
+      code: product.code,
+      article: product.article || '',
+      externalCode: product.externalCode || '',
+      barcode: getProductBarcode(product),
+      price: getProductPrice(product),
+      cost,
+      stock: stockValues[index],
+      href: product.meta.href,
+      type: product.meta.type
+    };
+  });
+}
+
+async function hydrateOrderItemCosts(input) {
+  if (!Array.isArray(input.items) || !input.items.length) return input;
+
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const currencies = await getMoySkladCurrencies(token).catch(() => []);
+  const currenciesByHref = new Map(currencies.map((currency) => [currency.meta?.href, currency]));
+  const costs = await mapWithConcurrency(input.items, 5, async (item) => {
+    const href = String(item.assortmentHref || '');
+    const type = String(item.assortmentType || 'product');
+    if (!href || type !== 'product') return toMoney(item.productCost || 0);
+
+    const cached = productCostCache.get(href);
+    if (cached && Date.now() - cached.createdAt < 300_000) return cached.value;
+
+    const response = await moySkladFetch(href, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
+    const product = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, `Не удалось получить закупочную цену товара «${item.productName || ''}».`, product);
+    }
+    const value = getProductCost(product, currenciesByHref);
+    productCostCache.set(href, { value, createdAt: Date.now() });
+    return value;
+  });
+
+  return {
+    ...input,
+    items: input.items.map((item, index) => ({ ...item, productCost: costs[index] }))
+  };
+}
+
+async function getMoySkladProductStock(token, productHref, storeHref) {
+  if (!productHref || !storeHref) return null;
+
+  const cacheKey = `${storeHref}|${productHref}`;
+  const cached = productStockCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 20_000) {
+    return cached.value;
+  }
+
+  const params = new URLSearchParams({
+    limit: '1',
+    filter: `store=${storeHref};product=${productHref}`
+  });
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/report/stock/all?${params}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось загрузить остаток товара.', data);
+  }
+
+  const row = Array.isArray(data?.rows) ? data.rows[0] : null;
+  const rawStock = Number(row?.stock ?? 0);
+  const value = Number.isFinite(rawStock) ? rawStock : 0;
+  productStockCache.set(cacheKey, { value, createdAt: Date.now() });
+  return value;
 }
 
 async function getAccountingPriceCatalog(options = {}) {
@@ -1785,13 +2013,27 @@ async function getMoySkladCurrencyByIsoCode(token, isoCode) {
 }
 
 async function getMoySkladCurrencies(token) {
+  if (currenciesCache.value.length && Date.now() - currenciesCache.createdAt < 600_000) {
+    return currenciesCache.value;
+  }
+  if (currenciesInflight) return currenciesInflight;
+
+  currenciesInflight = loadMoySkladCurrencies(token).finally(() => {
+    currenciesInflight = null;
+  });
+  return currenciesInflight;
+}
+
+async function loadMoySkladCurrencies(token) {
   const params = new URLSearchParams({ limit: '100' });
   const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/currency?${params}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) throw httpError(response.status, 'Не удалось загрузить валюты из МойСклад.', data);
-  return data?.rows || [];
+  const rows = data?.rows || [];
+  currenciesCache = { value: rows, createdAt: Date.now() };
+  return rows;
 }
 
 function isKgsCurrency(currency) {
@@ -1887,34 +2129,31 @@ function normalizePriceTypeName(value) {
     .replace(/\s+/g, ' ');
 }
 
-function getProductCost(product) {
+function getProductCost(product, currenciesByHref = new Map()) {
   const buyPrice = product.buyPrice;
   if (!buyPrice || !Number.isFinite(Number(buyPrice.value))) {
     return 0;
   }
-  return roundMoney(Number(buyPrice.value) / 100);
+  const value = Number(buyPrice.value) / 100;
+  const currency = resolveAccountingCurrency(buyPrice.currency, currenciesByHref);
+  return roundMoney(isUsdCurrency(currency) ? value * getReportUsdCostRate(1) : value);
 }
 
-function getReportPositionCostTotal(position, documentMoneyRate = 1) {
+function getReportPositionCostTotal(position, documentMoneyRate = 1, currenciesByHref = new Map()) {
   const buyPrice = position.assortment?.buyPrice;
   if (!buyPrice || !Number.isFinite(Number(buyPrice.value))) {
     return 0;
   }
   const value = Number(buyPrice.value) / 100;
-  const cost = shouldConvertReportBuyPriceToKgs(buyPrice, position, documentMoneyRate)
+  const currency = resolveAccountingCurrency(buyPrice.currency, currenciesByHref);
+  const cost = shouldConvertReportBuyPriceToKgs(currency)
     ? value * getReportUsdCostRate(documentMoneyRate)
     : value;
   return roundMoney(cost * Number(position.quantity || 0));
 }
 
-function shouldConvertReportBuyPriceToKgs(buyPrice, position, documentMoneyRate = 1) {
-  if (isKgsCurrency(buyPrice.currency)) return false;
-  if (isUsdCurrency(buyPrice.currency)) return true;
-  if (documentMoneyRate > 1) return true;
-
-  const unitCost = Number(buyPrice.value || 0) / 100;
-  const unitSalePrice = fromMoySkladPrice(position.price);
-  return unitCost > 0 && unitSalePrice > 0 && unitCost < unitSalePrice * 0.45;
+function shouldConvertReportBuyPriceToKgs(currency) {
+  return isUsdCurrency(currency);
 }
 
 function isUsdCurrency(currency) {
@@ -1979,19 +2218,37 @@ function getPaymentSortWeight(paymentType) {
 }
 
 async function getSalesReport(input) {
+  const cacheKey = [input.dateFrom, input.dateTo, input.retailStoreHref || '', input.storeHref || ''].join('|');
+  const cached = salesReportCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 60_000) return cached.value;
+  if (salesReportInflight.has(cacheKey)) return salesReportInflight.get(cacheKey);
+
+  const request = loadSalesReport(input)
+    .then((report) => {
+      salesReportCache.set(cacheKey, { value: report, createdAt: Date.now() });
+      return report;
+    })
+    .finally(() => salesReportInflight.delete(cacheKey));
+  salesReportInflight.set(cacheKey, request);
+  return request;
+}
+
+async function loadSalesReport(input) {
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const dateFrom = normalizeReportDate(input.dateFrom, 'from');
   const dateTo = normalizeReportDate(input.dateTo, 'to');
   const retailStoreHref = String(input.retailStoreHref || '').trim();
   const storeHref = String(input.storeHref || '').trim();
 
-  const [retailRows, demandRows] = await Promise.all([
+  const [retailRows, demandRows, currencies] = await Promise.all([
     loadMoySkladReportDocuments(token, 'retaildemand', dateFrom, dateTo, { retailStoreHref }),
-    loadMoySkladReportDocuments(token, 'demand', dateFrom, dateTo, { storeHref })
+    loadMoySkladReportDocuments(token, 'demand', dateFrom, dateTo, { storeHref }),
+    getMoySkladCurrencies(token).catch(() => [])
   ]);
+  const currenciesByHref = new Map(currencies.map((currency) => [currency.meta?.href, currency]));
 
   const rows = [...retailRows, ...demandRows]
-    .map((document) => mapReportDocument(document))
+    .map((document) => mapReportDocument(document, currenciesByHref))
     .sort((left, right) => new Date(right.moment) - new Date(left.moment));
 
   const totals = rows.reduce((sum, row) => ({
@@ -2040,7 +2297,9 @@ async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo
       offset: String(offset),
       order: 'moment,desc',
       filter: filters.join(';'),
-      expand: 'agent,organization,store,retailStore,retailShift,positions,positions.assortment,rate.currency'
+      expand: reportCurrencyExpandSupported
+        ? 'agent,organization,store,retailStore,retailShift,positions,positions.assortment,rate.currency'
+        : 'agent,organization,store,retailStore,retailShift,positions,positions.assortment'
     });
 
     const data = await loadMoySkladReportPage(token, documentType, params);
@@ -2085,7 +2344,10 @@ async function loadMoySkladReportPageWithoutCurrency(token, documentType, params
   const fallbackUrl = `${MOYSKLAD_BASE_URL}/entity/${documentType}?${fallbackParams}`;
   const fallbackResponse = await moySkladFetch(fallbackUrl, { headers });
   const fallbackData = await fallbackResponse.json().catch(() => null);
-  if (fallbackResponse.ok) return fallbackData;
+  if (fallbackResponse.ok) {
+    reportCurrencyExpandSupported = false;
+    return fallbackData;
+  }
   throw httpError(
     fallbackResponse.status || originalStatus || 500,
     `Не удалось загрузить отчет ${getDocumentTypeLabel(documentType)} из МойСклад.`,
@@ -2093,22 +2355,28 @@ async function loadMoySkladReportPageWithoutCurrency(token, documentType, params
   );
 }
 
-function mapReportDocument(document) {
+function mapReportDocument(document, currenciesByHref = new Map()) {
   const documentType = document.reportDocumentType || document.meta?.type || '';
   const positions = Array.isArray(document.positions?.rows) ? document.positions.rows : [];
-  const moneyRate = getReportDocumentMoneyRate(document);
+  const moneyRate = getReportDocumentMoneyRate(document, currenciesByHref);
   const amount = fromReportDocumentMoney(document.sum, moneyRate);
   const paidAttribute = getReportNumberAttribute(document, 'PAID', documentType);
   const unpaidAttribute = getReportNumberAttribute(document, 'UNPAID', documentType);
-  const paid = paidAttribute !== null
-    ? roundMoney(paidAttribute * moneyRate)
-    : documentType === 'retaildemand'
+  const linkedPaid = fromReportDocumentMoney(document.payedSum, moneyRate);
+  const paid = documentType === 'demand'
+    ? roundMoney(Math.max(linkedPaid, paidAttribute !== null ? paidAttribute * moneyRate : 0))
+    : paidAttribute !== null
+      ? roundMoney(paidAttribute * moneyRate)
+      : documentType === 'retaildemand'
       ? roundMoney(fromReportDocumentMoney(document.cashSum, moneyRate) + fromReportDocumentMoney(document.noCashSum, moneyRate))
       : fromReportDocumentMoney(document.payedSum, moneyRate);
-  const unpaid = unpaidAttribute !== null
+  const unpaid = documentType === 'demand'
+    ? roundMoney(Math.max(0, amount - paid))
+    : unpaidAttribute !== null
     ? roundMoney(unpaidAttribute * moneyRate)
     : roundMoney(Math.max(0, amount - paid));
-  const costTotal = roundMoney(positions.reduce((sum, position) => sum + getReportPositionCostTotal(position, moneyRate), 0));
+  const costTotal = roundMoney(positions.reduce((sum, position) =>
+    sum + getReportPositionCostTotal(position, moneyRate, currenciesByHref), 0));
   const commission = roundMoney(getReportMoneyFromTextAttribute(document, 'COMMISSION', documentType) * moneyRate);
   const calculatedNetProfit = costTotal > 0 ? roundMoney(amount - commission - costTotal) : null;
 
@@ -2155,8 +2423,9 @@ function fromReportDocumentMoney(value, rate = 1) {
   return roundMoney(fromMoySkladPrice(value) * rate);
 }
 
-function getReportDocumentMoneyRate(document) {
-  const currency = document.rate?.currency || document.currency || document.currencyInfo;
+function getReportDocumentMoneyRate(document, currenciesByHref = new Map()) {
+  const currencyReference = document.rate?.currency || document.currency || document.currencyInfo;
+  const currency = resolveAccountingCurrency(currencyReference, currenciesByHref);
   if (isKgsCurrency(currency)) return 1;
   if (isUsdCurrency(currency)) return getReportUsdCostRate(document.rate?.value);
 
@@ -2678,6 +2947,10 @@ async function getPayrollReport(input) {
   const dateTo = normalizePayrollDate(input.dateTo);
   if (dateFrom > dateTo) throw httpError(400, 'Дата начала не может быть позже даты окончания.');
 
+  const cacheKey = `${dateFrom}|${dateTo}`;
+  const cached = payrollReportCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < 30_000) return cached.value;
+
   const [employees, salesReport] = await Promise.all([
     getMoySkladEmployees(),
     getSalesReport({ dateFrom, dateTo, retailStoreHref: '', storeHref: '' })
@@ -2692,11 +2965,22 @@ async function getPayrollReport(input) {
       unassignedRevenue = roundMoney(unassignedRevenue + Number(row.amount || 0));
       continue;
     }
-    const current = salesByEmployee.get(key) || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0 };
+    const current = salesByEmployee.get(key) || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0, sales: [] };
     current.documents += 1;
     current.revenue = roundMoney(current.revenue + Number(row.amount || 0));
     current.profit = roundMoney(current.profit + Number(row.netProfit || 0));
     current.categoryBonus = roundMoney(current.categoryBonus + getDocumentCategoryBonus(row.products || []));
+    current.sales.push({
+      id: row.id,
+      name: row.name,
+      typeLabel: row.typeLabel,
+      moment: row.moment,
+      amount: row.amount,
+      netProfit: row.netProfit,
+      webUrl: row.webUrl,
+      customerName: row.customerName,
+      products: row.products || []
+    });
     salesByEmployee.set(key, current);
   }
 
@@ -2704,7 +2988,7 @@ async function getPayrollReport(input) {
     const payroll = normalizePayrollConfig(employee.payroll);
     const sales = salesByEmployee.get(employee.href)
       || salesByEmployee.get(normalizeEmployeeKey(employee.name))
-      || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0 };
+      || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0, sales: [] };
     const includesSalary = payroll.enabled && ['salary', 'salary_percent', 'salary_category_bonus'].includes(payroll.scheme);
     const includesPercent = payroll.enabled && ['percent', 'salary_percent'].includes(payroll.scheme);
     const includesCategoryBonus = payroll.enabled && ['category_bonus', 'salary_category_bonus'].includes(payroll.scheme);
@@ -2724,6 +3008,7 @@ async function getPayrollReport(input) {
       revenue: sales.revenue,
       profit: sales.profit,
       categoryBonus: sales.categoryBonus,
+      sales: [...sales.sales].sort((left, right) => new Date(right.moment) - new Date(left.moment)),
       fixedSalary,
       commission,
       totalSalary: roundMoney(fixedSalary + commission)
@@ -2740,7 +3025,9 @@ async function getPayrollReport(input) {
     totalSalary: roundMoney(sum.totalSalary + row.totalSalary)
   }), { employees: 0, documents: 0, revenue: 0, profit: 0, fixedSalary: 0, commission: 0, totalSalary: 0 });
 
-  return { dateFrom, dateTo, rows, totals: { ...totals, unassignedDocuments, unassignedRevenue } };
+  const result = { dateFrom, dateTo, rows, totals: { ...totals, unassignedDocuments, unassignedRevenue } };
+  payrollReportCache.set(cacheKey, { value: result, createdAt: Date.now() });
+  return result;
 }
 
 function getDocumentCategoryBonus(products) {
@@ -2974,7 +3261,7 @@ function getIdFromHref(href) {
 async function serveStatic(pathname, res) {
   const safePath = pathname === '/'
     ? '/about.html'
-    : pathname === '/sales.html'
+    : pathname === '/sales.html' || pathname === '/debt-sale.html'
       ? '/index.html'
       : pathname;
   const normalized = normalize(safePath).replace(/^(\.\.[/\\])+/, '');
@@ -2999,37 +3286,248 @@ async function readJson(req) {
   let body = '';
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 1024 * 1024) {
+    if (body.length > 8 * 1024 * 1024) {
       throw httpError(413, 'Слишком большой запрос.');
     }
   }
   return body ? JSON.parse(body) : {};
 }
 
-async function moySkladFetch(url, options = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MOYSKLAD_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal
-    });
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw httpError(504, 'МойСклад слишком долго отвечает. Попробуйте еще раз.');
-    }
-    throw httpError(502, 'Не удалось подключиться к МойСклад. Проверьте интернет или попробуйте еще раз.', {
-      cause: error.message || String(error)
-    });
-  } finally {
-    clearTimeout(timeout);
+function validateTelegramReceiptInput(receiptPhoto) {
+  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_RECEIPT_CHAT_ID) {
+    throw httpError(500, 'Заполните TELEGRAM_BOT_TOKEN и TELEGRAM_RECEIPT_CHAT_ID в .env.');
   }
+  const data = String(receiptPhoto?.data || '');
+  const mimeType = String(receiptPhoto?.mimeType || '');
+  if (!data || !/^image\/(jpeg|png|webp)$/i.test(mimeType)) {
+    throw httpError(400, 'Добавьте корректную фотографию чека.');
+  }
+  if (data.length > 7 * 1024 * 1024) throw httpError(413, 'Обработанное фото чека слишком большое.');
+}
+
+async function sendTelegramReceiptSafely(receiptPhoto, calculation, input, document) {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const buffer = Buffer.from(String(receiptPhoto.data), 'base64');
+    const caption = buildTelegramReceiptCaption(calculation, input, document);
+    let chatId = telegramReceiptChatId || process.env.TELEGRAM_RECEIPT_CHAT_ID;
+    let { response, data } = await sendTelegramPhoto(token, chatId, buffer, receiptPhoto, caption);
+
+    const migratedChatId = data?.parameters?.migrate_to_chat_id;
+    if ((!response.ok || !data?.ok) && migratedChatId) {
+      chatId = String(migratedChatId);
+      telegramReceiptChatId = chatId;
+      ({ response, data } = await sendTelegramPhoto(token, chatId, buffer, receiptPhoto, caption));
+    }
+
+    if (!response.ok || !data?.ok) throw new Error(data?.description || `Telegram вернул ${response.status}`);
+    return { sent: true, messageId: data.result?.message_id || null };
+  } catch (error) {
+    return { sent: false, error: error.message || 'Не удалось отправить фото в Telegram.' };
+  }
+}
+
+async function sendTelegramPhoto(token, chatId, buffer, receiptPhoto, caption) {
+  const form = new FormData();
+  form.set('chat_id', chatId);
+  form.set('photo', new Blob([buffer], { type: receiptPhoto.mimeType }), receiptPhoto.name || 'receipt.jpg');
+  form.set('caption', caption);
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
+  const data = await response.json().catch(() => null);
+  return { response, data };
+}
+
+function buildTelegramReceiptCaption(calculation, input, document) {
+  const products = (calculation.items || []).map((item) => `• ${item.productName || item.name || 'Товар'} × ${item.quantity || 1}`).join('\n');
+  return [
+    `Чек: ${document.type === 'retaildemand' ? 'Продажа' : 'Отгрузка'} №${document.name || ''}`,
+    `Сумма: ${formatMoney(calculation.finalTotal || calculation.baseTotal || 0)} сом`,
+    `Филиал: ${input.branchName || input.retailStoreName || '-'}`,
+    `Сотрудник: ${input.employeeName || '-'}`,
+    `Клиент: ${input.customerName || 'Розничный покупатель'}`,
+    `Телефон: ${input.customerPhone || '-'}`,
+    `Оплата: ${calculation.paymentLabel || input.paymentTypeName || '-'}`,
+    '',
+    products
+  ].join('\n').slice(0, 1024);
+}
+
+async function moySkladFetch(url, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const retryable = method === 'GET' || method === 'HEAD';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MOYSKLAD_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      if (response.status !== 429 || !retryable || attempt === 2) return response;
+
+      await response.arrayBuffer().catch(() => null);
+      const retryAfter = Number(response.headers.get('retry-after'));
+      const delay = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(5000, retryAfter * 1000)
+        : 500 * (attempt + 1);
+      await sleep(delay);
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw httpError(504, 'МойСклад слишком долго отвечает. Попробуйте еще раз.');
+      }
+      if (!retryable || attempt === 2) {
+        throw httpError(502, 'Не удалось подключиться к МойСклад. Проверьте интернет или попробуйте еще раз.', {
+          cause: error.message || String(error)
+        });
+      }
+      await sleep(300 * (attempt + 1));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw httpError(502, 'Не удалось подключиться к МойСклад.');
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function supabaseGet(apiPath, params = {}) {
   const url = new URL(`${getSupabaseUrl()}${apiPath}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
   return supabaseFetch(url, { method: 'GET' });
+}
+
+const expenseCategories = new Set(['fixed', 'variable', 'one_time', 'operational', 'marketing', 'taxes', 'financial']);
+
+async function getExpenses(input = {}) {
+  const params = {
+    select: 'id,expense_date,category,subcategory,amount,branch_name,payment_method,description,created_by,created_at,updated_at',
+    order: 'expense_date.desc,created_at.desc',
+    limit: '1000'
+  };
+
+  // PostgREST requires repeated filters for a date range, so build this URL explicitly.
+  const url = new URL(`${getSupabaseUrl()}/rest/v1/business_expenses`);
+  url.searchParams.set('select', params.select);
+  url.searchParams.set('order', params.order);
+  url.searchParams.set('limit', params.limit);
+  if (isIsoDate(input.dateFrom)) url.searchParams.append('expense_date', `gte.${input.dateFrom}`);
+  if (isIsoDate(input.dateTo)) url.searchParams.append('expense_date', `lte.${input.dateTo}`);
+  if (expenseCategories.has(input.category)) url.searchParams.set('category', `eq.${input.category}`);
+  return supabaseFetch(url, { method: 'GET' });
+}
+
+async function createExpense(input, user) {
+  const payload = normalizeExpenseInput(input, user);
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/business_expenses?select=*`, {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+  return rows[0];
+}
+
+async function updateExpense(id, input, user) {
+  const payload = normalizeExpenseInput(input, user, true);
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/business_expenses?id=eq.${encodeURIComponent(id)}&select=*`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+  if (!rows[0]) throw httpError(404, 'Расход не найден.');
+  return rows[0];
+}
+
+async function deleteExpense(id) {
+  await supabaseFetch(`${getSupabaseUrl()}/rest/v1/business_expenses?id=eq.${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' }
+  });
+}
+
+function normalizeExpenseInput(input, user, updating = false) {
+  const expenseDate = String(input.expenseDate || '').trim();
+  const category = String(input.category || '').trim();
+  const subcategory = String(input.subcategory || '').trim();
+  const amount = roundMoney(toMoney(input.amount));
+  if (!isIsoDate(expenseDate)) throw httpError(400, 'Укажите дату расхода.');
+  if (!expenseCategories.has(category)) throw httpError(400, 'Выберите вид расхода.');
+  if (!subcategory) throw httpError(400, 'Укажите статью расхода.');
+  if (!Number.isFinite(amount) || amount <= 0) throw httpError(400, 'Сумма расхода должна быть больше нуля.');
+  return {
+    expense_date: expenseDate,
+    category,
+    subcategory: subcategory.slice(0, 120),
+    amount,
+    branch_name: String(input.branchName || '').trim().slice(0, 120),
+    payment_method: String(input.paymentMethod || '').trim().slice(0, 80),
+    description: String(input.description || '').trim().slice(0, 1000),
+    ...(updating ? {} : { created_by: String(user?.name || user?.login || '').slice(0, 120) })
+  };
+}
+
+const deliveryStatuses = new Set(['new', 'assigned', 'in_transit', 'delivered', 'cancelled']);
+
+async function getDeliveries(input, user) {
+  const url = new URL(`${getSupabaseUrl()}/rest/v1/business_deliveries`);
+  url.searchParams.set('select', '*');
+  url.searchParams.set('order', 'scheduled_at.asc,created_at.desc');
+  url.searchParams.set('limit', '1000');
+  if (isIsoDate(input.dateFrom)) url.searchParams.append('scheduled_at', `gte.${input.dateFrom}T00:00:00+06:00`);
+  if (isIsoDate(input.dateTo)) url.searchParams.append('scheduled_at', `lte.${input.dateTo}T23:59:59+06:00`);
+  if (deliveryStatuses.has(input.status)) url.searchParams.set('status', `eq.${input.status}`);
+  const rows = await supabaseFetch(url, { method: 'GET' });
+  const allowedNames = normalizeCrmBranches(user?.branches).map((branch) => branch === 'ayu' ? 'Аю-Гранд' : 'Беш-Сары');
+  return rows.filter((row) => allowedNames.includes(row.branch_name));
+}
+
+async function createDeliveryRecord(input, document, user) {
+  const delivery = input.delivery || {};
+  const scheduledAt = new Date(delivery.scheduledAt || '');
+  const items = Array.isArray(delivery.items) ? delivery.items.filter((item) => item?.name && Number(item.quantity) > 0) : [];
+  if (!items.length) throw httpError(400, 'Выберите хотя бы один товар для доставки.');
+  if (!Number.isFinite(scheduledAt.getTime())) throw httpError(400, 'Укажите дату и время доставки.');
+  if (!String(delivery.address || '').trim()) throw httpError(400, 'Укажите адрес доставки.');
+  if (!String(input.customerPhone || '').trim()) throw httpError(400, 'Для доставки укажите телефон клиента.');
+  assertCrmBranchAccess(user, input.branchName);
+  const payload = {
+    document_id: String(document.id || ''),
+    document_type: String(document.type || ''),
+    document_name: String(document.name || ''),
+    document_url: String(document.webUrl || getMoySkladWebUrl(document.type, document.id) || ''),
+    branch_name: String(input.branchName || '').trim(),
+    customer_name: String(input.customerName || 'Розничный покупатель').trim(),
+    customer_phone: String(input.customerPhone || '').trim(),
+    delivery_address: String(delivery.address || '').trim(),
+    scheduled_at: scheduledAt.toISOString(),
+    employee_name: String(input.employeeName || user?.name || '').trim(),
+    items: items.map((item) => ({ name: String(item.name).slice(0, 300), quantity: Number(item.quantity), code: String(item.code || '').slice(0, 80) })),
+    status: 'new',
+    notes: String(delivery.notes || '').trim().slice(0, 1000),
+    created_by: String(user?.name || user?.login || '').slice(0, 120)
+  };
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/business_deliveries?select=*`, {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+  return rows[0];
+}
+
+async function updateDelivery(id, input, user) {
+  const status = String(input.status || '');
+  if (!deliveryStatuses.has(status)) throw httpError(400, 'Некорректный статус доставки.');
+  const existing = await supabaseGet('/rest/v1/business_deliveries', { id: `eq.${id}`, select: '*', limit: '1' });
+  if (!existing[0]) throw httpError(404, 'Доставка не найдена.');
+  assertCrmBranchAccess(user, existing[0].branch_name);
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/business_deliveries?id=eq.${encodeURIComponent(id)}&select=*`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({ status })
+  });
+  return rows[0];
+}
+
+function isIsoDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
 
 async function supabaseRpc(name, body) {
@@ -3042,7 +3540,7 @@ async function supabaseRpc(name, body) {
 async function supabaseFetch(url, options = {}) {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
   if (!getSupabaseUrl() || !key) {
-    throw httpError(500, 'Бонусная система включена, но не заполнены SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY.');
+    throw httpError(500, 'Не заполнены SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY.');
   }
 
   const response = await fetch(url, {
@@ -3120,10 +3618,10 @@ function requiredReportEnv(name) {
   return value;
 }
 
-function loginReportUser(req, res, body) {
+async function loginReportUser(req, res, body) {
   const login = String(body.login || '').trim();
   const password = String(body.password || '');
-  const crmUser = authenticateCrmUser(login, password);
+  const crmUser = await authenticateCrmUser(login, password);
   const legacyMatch = safeEqual(login, requiredReportEnv('REPORT_LOGIN'))
     && safeEqual(password, requiredReportEnv('REPORT_PASSWORD'));
   const user = crmUser || (legacyMatch ? { login, name: 'Владелец', role: 'owner' } : null);
@@ -3139,7 +3637,7 @@ function loginReportUser(req, res, body) {
 
 function requireReportAuth(req) {
   const user = getCrmUser(req);
-  if (user && ['admin', 'owner', 'accountant', 'employee'].includes(user.role)) return user;
+  if (user && hasCrmPermission(user, 'reports')) return user;
   if (user) throw httpError(403, 'Отчетность недоступна для вашей роли.');
   if (!isReportAuthenticated(req)) {
     throw httpError(401, 'Войдите в отчетность.');
@@ -3147,9 +3645,30 @@ function requireReportAuth(req) {
   return { login: 'legacy-report', name: 'Владелец', role: 'owner' };
 }
 
+function canViewReportProfit(user) {
+  return ['admin', 'owner', 'manager', 'accountant'].includes(user?.role);
+}
+
+function sanitizeSalesReportForUser(report, user) {
+  const canViewProfit = canViewReportProfit(user);
+  if (canViewProfit) {
+    return { ...report, canViewProfit: true };
+  }
+
+  const totals = { ...(report?.totals || {}) };
+  delete totals.netProfit;
+  const rows = (Array.isArray(report?.rows) ? report.rows : []).map((row) => {
+    const sanitized = { ...row };
+    delete sanitized.netProfit;
+    return sanitized;
+  });
+
+  return { ...report, totals, rows, canViewProfit: false };
+}
+
 function requireAccountingAuth(req) {
   const user = getCrmUser(req);
-  if (user && ['admin', 'owner', 'accountant'].includes(user.role)) return user;
+  if (user && hasCrmPermission(user, 'priceFormula')) return user;
   if (user) throw httpError(403, 'Бухгалтерия недоступна для вашей роли.');
   if (isReportAuthenticated(req)) return { login: 'legacy-report', name: 'Бухгалтер', role: 'accountant' };
   throw httpError(401, 'Войдите в бухгалтерию.');
@@ -3188,7 +3707,18 @@ function setReportSession(res, login) {
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
 }
 
-function getCrmUsers() {
+const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'expenses', 'payroll', 'priceFormula', 'audit', 'users', 'about'];
+const crmRolePermissions = {
+  admin: [...crmPermissionNames],
+  owner: [...crmPermissionNames],
+  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'expenses', 'payroll', 'about'],
+  seller: ['sales', 'debtSale', 'deliveries', 'reports', 'about'],
+  logistics: ['sales', 'debtSale', 'deliveries', 'about'],
+  accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'about'],
+  employee: ['sales', 'debtSale', 'deliveries', 'about']
+};
+
+function getLegacyCrmUsers() {
   return [
     { role: 'admin', login: process.env.CRM_ADMIN_LOGIN || 'admin', password: process.env.CRM_ADMIN_PASSWORD || 'admin2026', name: process.env.CRM_ADMIN_NAME || 'Администратор' },
     { role: 'owner', login: process.env.CRM_OWNER_LOGIN || process.env.REPORT_LOGIN || 'owner', password: process.env.CRM_OWNER_PASSWORD || process.env.REPORT_PASSWORD || 'owner2026', name: process.env.CRM_OWNER_NAME || 'Владелец' },
@@ -3197,11 +3727,162 @@ function getCrmUsers() {
   ];
 }
 
-function authenticateCrmUser(login, password) {
+async function getCrmLoginUsers() {
+  try {
+    const rows = await supabaseGet('/rest/v1/crm_users', {
+      select: 'id,login,name,position,role,branches,password_hash',
+      active: 'eq.true',
+      order: 'name.asc'
+    });
+    const users = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      position: row.position || getCrmRoleLabel(row.role),
+      role: row.role,
+      branches: normalizeCrmBranches(row.branches),
+      passwordSet: Boolean(row.password_hash)
+    }));
+    if (!users.some((user) => user.passwordSet && (user.role === 'admin' || user.role === 'owner'))) {
+      const setupAdmin = getLegacyCrmUsers().find((user) => user.role === 'admin');
+      users.unshift({ id: `legacy:${setupAdmin.login}`, name: setupAdmin.name, position: 'Первичная настройка доступа', branches: ['ayu', 'besh'], passwordSet: true });
+    }
+    return users;
+  } catch (error) {
+    return getLegacyCrmUsers().map((user) => ({ id: `legacy:${user.login}`, name: user.name, position: getCrmRoleLabel(user.role), branches: ['ayu', 'besh'], passwordSet: true }));
+  }
+}
+
+async function getManagedCrmUsers() {
+  const rows = await supabaseGet('/rest/v1/crm_users', {
+    select: 'id,login,name,position,role,branches,permissions,active,password_hash,created_at,updated_at',
+    order: 'name.asc'
+  });
+  return rows.map(sanitizeManagedCrmUser);
+}
+
+async function authenticateCrmUser(login, password) {
   const normalizedLogin = String(login || '').trim();
   const normalizedPassword = String(password || '');
-  const found = getCrmUsers().find((user) => safeEqual(normalizedLogin, user.login) && safeEqual(normalizedPassword, user.password));
-  return found ? { login: found.login, name: found.name, role: found.role } : null;
+  if (/^[0-9a-f-]{36}$/i.test(normalizedLogin)) {
+    try {
+      const rows = await supabaseGet('/rest/v1/crm_users', {
+        id: `eq.${normalizedLogin}`,
+        active: 'eq.true',
+        select: 'id,login,name,position,role,branches,permissions,password_hash',
+        limit: '1'
+      });
+      const found = rows[0];
+      if (!found?.password_hash || !verifyCrmPassword(normalizedPassword, found.password_hash)) return null;
+      return toSessionCrmUser(found);
+    } catch {
+      return null;
+    }
+  }
+
+  const legacyLogin = normalizedLogin.replace(/^legacy:/, '');
+  const found = getLegacyCrmUsers().find((user) => safeEqual(legacyLogin, user.login) && safeEqual(normalizedPassword, user.password));
+  return found ? toSessionCrmUser({ ...found, id: `legacy:${found.login}`, branches: ['ayu', 'besh'] }) : null;
+}
+
+async function updateManagedCrmUser(id, input, actor) {
+  const currentRows = await supabaseGet('/rest/v1/crm_users', {
+    id: `eq.${id}`,
+    select: 'id,name,role',
+    limit: '1'
+  });
+  const current = currentRows[0];
+  if (!current) throw httpError(404, 'Сотрудник не найден.');
+  if (actor?.role !== 'admin' && current.role === 'admin') {
+    throw httpError(403, 'Только главный администратор может изменять главного администратора.');
+  }
+  if (actor?.role !== 'admin' && input.role === 'admin') {
+    throw httpError(403, 'Только главный администратор может назначать эту роль.');
+  }
+  const role = ['admin', 'owner', 'manager', 'seller', 'logistics', 'accountant', 'employee'].includes(input.role) ? input.role : 'seller';
+  const permissions = role === 'admin' || role === 'owner'
+    ? [...crmPermissionNames]
+    : [...new Set((Array.isArray(input.permissions) ? input.permissions : crmRolePermissions[role] || []).filter((value) => crmPermissionNames.includes(value)))];
+  const branches = normalizeCrmBranches(input.branches);
+  if (!branches.length) throw httpError(400, 'Выберите хотя бы один филиал.');
+  const payload = {
+    name: String(input.name || '').trim().slice(0, 120),
+    login: String(input.login || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 60),
+    position: String(input.position || '').trim().slice(0, 120),
+    role,
+    branches,
+    permissions,
+    active: input.active !== false
+  };
+  if (!payload.name || !payload.login) throw httpError(400, 'Заполните имя и логин сотрудника.');
+  const password = String(input.password || '');
+  if (password) {
+    if (password.length < 6) throw httpError(400, 'Пароль должен содержать минимум 6 символов.');
+    payload.password_hash = hashCrmPassword(password);
+  }
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/crm_users?id=eq.${encodeURIComponent(id)}&select=*`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+  if (!rows[0]) throw httpError(404, 'Сотрудник не найден.');
+  return sanitizeManagedCrmUser(rows[0]);
+}
+
+function sanitizeManagedCrmUser(row) {
+  return {
+    id: row.id,
+    login: row.login,
+    name: row.name,
+    position: row.position || '',
+    role: row.role,
+    branches: normalizeCrmBranches(row.branches),
+    permissions: normalizeCrmPermissions(row.role, row.permissions),
+    active: row.active !== false,
+    passwordSet: Boolean(row.password_hash),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function toSessionCrmUser(row) {
+  return {
+    id: row.id || '',
+    login: row.login,
+    name: row.name,
+    position: row.position || getCrmRoleLabel(row.role),
+    role: row.role,
+    branches: normalizeCrmBranches(row.branches).length ? normalizeCrmBranches(row.branches) : ['ayu', 'besh'],
+    permissions: normalizeCrmPermissions(row.role, row.permissions)
+  };
+}
+
+function normalizeCrmBranches(branches) {
+  return [...new Set((Array.isArray(branches) ? branches : []).filter((value) => value === 'ayu' || value === 'besh'))];
+}
+
+function normalizeCrmPermissions(role, permissions) {
+  if (role === 'admin' || role === 'owner') return [...crmPermissionNames];
+  const values = Array.isArray(permissions) && permissions.length ? permissions : crmRolePermissions[role] || [];
+  if (role === 'seller' && !values.includes('reports')) values.push('reports');
+  return [...new Set(values.filter((value) => crmPermissionNames.includes(value)))];
+}
+
+function getCrmRoleLabel(role) {
+  return ({ admin: 'Администратор', owner: 'Владелец', manager: 'Менеджер', seller: 'Продавец', logistics: 'Логистика', accountant: 'Бухгалтер', employee: 'Сотрудник' })[role] || role;
+}
+
+function hashCrmPassword(password) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(String(password), salt, 64).toString('hex');
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyCrmPassword(password, stored) {
+  const [algorithm, salt, expectedHex] = String(stored || '').split('$');
+  if (algorithm !== 'scrypt' || !salt || !expectedHex) return false;
+  const actual = scryptSync(String(password), salt, 64);
+  const expected = Buffer.from(expectedHex, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function requireAnyAuthenticatedUser(req) {
@@ -3217,6 +3898,26 @@ function requireCrmRole(req, roles) {
   return user;
 }
 
+function requireCrmPermission(req, permission) {
+  const user = getCrmUser(req);
+  if (!user) throw httpError(401, 'Войдите в систему.');
+  if (!hasCrmPermission(user, permission)) throw httpError(403, 'У вас нет доступа к этому разделу.');
+  return user;
+}
+
+function hasCrmPermission(user, permission) {
+  return normalizeCrmPermissions(user?.role, user?.permissions).includes(permission);
+}
+
+function assertCrmBranchAccess(user, branchName) {
+  const normalized = String(branchName || '').trim().toLocaleLowerCase('ru');
+  const branchKey = normalized.includes('аю') ? 'ayu' : normalized.includes('беш') ? 'besh' : '';
+  if (!branchKey) throw httpError(400, 'Не удалось определить филиал документа.');
+  if (!normalizeCrmBranches(user?.branches).includes(branchKey)) {
+    throw httpError(403, 'У сотрудника нет доступа к выбранному филиалу.');
+  }
+}
+
 function getEffectiveUser(req, fallbackRole) {
   return getCrmUser(req) || { login: 'legacy-report', name: fallbackRole === 'accountant' ? 'Бухгалтер' : 'Владелец', role: fallbackRole };
 }
@@ -3229,7 +3930,7 @@ function getCrmUser(req) {
   try {
     const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
     if (!payload.exp || payload.exp <= Date.now()) return null;
-    return { login: payload.login, name: payload.name, role: payload.role };
+    return toSessionCrmUser(payload);
   } catch {
     return null;
   }

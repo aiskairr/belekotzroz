@@ -17,6 +17,7 @@
             <p>Оклад и процент рассчитываются по продажам сотрудника за выбранный период.</p>
           </div>
           <div class="heading-actions">
+            <button id="addToExpensesButton" class="expense-button" type="button">Добавить в расходы</button>
             <button id="printButton" class="secondary" type="button">Печать ведомости</button>
             <button id="saveButton" type="button">Сохранить настройки</button>
           </div>
@@ -69,6 +70,15 @@
         </section>
       </section>
     </main>
-    <script src="/payroll.js?v=20260620-all-schemes" type="module"></script>
+    <section id="salesModal" class="sales-modal hidden" role="dialog" aria-modal="true" aria-labelledby="salesModalTitle">
+      <div class="sales-modal-card">
+        <header>
+          <div><p class="eyebrow">Продажи сотрудника</p><h2 id="salesModalTitle">Продажи</h2><p id="salesModalMeta"></p></div>
+          <button id="closeSalesModal" class="modal-close" type="button" aria-label="Закрыть">×</button>
+        </header>
+        <div id="salesModalBody" class="sales-modal-body"></div>
+      </div>
+    </section>
+    <script src="/payroll.js?v=20260622-sales-modal" type="module"></script>
   </body>
 </html>

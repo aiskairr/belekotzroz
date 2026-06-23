@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Расходы | Ordo CRM</title>
+    <link rel="stylesheet" href="/expenses.css?v=20260622-print-fix">
+    <link rel="stylesheet" href="/crm-shell.css">
+  </head>
+  <body>
+    <main id="expensesApp" class="expenses-app hidden">
+      <header class="page-heading">
+        <div><p class="eyebrow">Финансовый контроль</p><h1>Расходы</h1><p>Фиксируйте затраты отдельно от продаж, чтобы видеть реальный расход бизнеса.</p></div>
+        <button id="newExpenseButton" type="button">Добавить расход</button>
+      </header>
+
+      <section id="expenseEditor" class="editor-band">
+        <div class="section-heading"><div><p class="eyebrow">Новая запись</p><h2 id="editorTitle">Добавить расход</h2></div><button id="cancelEditButton" class="secondary hidden" type="button">Отменить редактирование</button></div>
+        <form id="expenseForm" class="expense-form">
+          <input id="expenseId" type="hidden">
+          <label><span>Дата</span><input id="expenseDate" type="date" required></label>
+          <label><span>Вид расхода</span><select id="category" required></select></label>
+          <label><span>Статья</span><input id="subcategory" list="subcategoryOptions" placeholder="Например: аренда" maxlength="120" required><datalist id="subcategoryOptions"></datalist></label>
+          <label><span>Сумма, сом</span><input id="amount" inputmode="decimal" placeholder="0,00" required></label>
+          <label><span>Филиал</span><select id="branchName"><option value="">Общий расход</option><option>Аю-Гранд</option><option>Беш-Сары</option></select></label>
+          <label><span>Способ оплаты</span><select id="paymentMethod"><option value="">Не указан</option><option>Наличными</option><option>QR / перевод</option><option>Расчетный счет</option><option>Корпоративная карта</option></select></label>
+          <label class="description-field"><span>Описание</span><input id="description" maxlength="1000" placeholder="Кому и за что заплатили"></label>
+          <button id="saveExpenseButton" type="submit">Сохранить расход</button>
+        </form>
+        <p id="categoryHint" class="category-hint"></p>
+      </section>
+
+      <section class="filters-band">
+        <form id="filtersForm" class="filters-form">
+          <label><span>С даты</span><input id="dateFrom" type="date"></label>
+          <label><span>По дату</span><input id="dateTo" type="date"></label>
+          <label><span>Вид</span><select id="categoryFilter"><option value="">Все виды</option></select></label>
+          <label class="search-field"><span>Поиск</span><input id="searchInput" type="search" placeholder="Статья, описание или филиал"></label>
+          <button type="submit">Показать</button>
+          <button id="currentMonthButton" class="secondary" type="button">Этот месяц</button>
+        </form>
+      </section>
+
+      <section class="summary-grid">
+        <article class="summary-total"><span>Всего расходов</span><strong id="totalAmount">0,00 сом</strong><small id="expenseCount">0 записей</small></article>
+        <div id="categorySummary" class="category-summary"></div>
+      </section>
+
+      <section class="expenses-table-section">
+        <div class="section-heading"><div><h2>Журнал расходов</h2><p id="status">Загрузка...</p></div><button id="printButton" class="secondary" type="button">Печать</button></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Дата</th><th>Вид</th><th>Статья</th><th>Филиал</th><th>Оплата</th><th>Описание</th><th>Автор</th><th class="number">Сумма</th><th></th></tr></thead>
+            <tbody id="expenseRows"><tr><td colspan="9">Загрузка...</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script src="/expenses.js?v=20260622-clean-loading" type="module"></script>
+  </body>
+</html>

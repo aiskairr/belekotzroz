@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Отчетность продаж</title>
-    <link rel="stylesheet" href="/report.css">
+    <link rel="stylesheet" href="/report.css?v=20260623-profit-roles">
     <link rel="stylesheet" href="/crm-shell.css">
   </head>
   <body>
@@ -16,6 +16,15 @@
             <h1>Отчетность</h1>
           </div>
         </header>
+
+        <nav class="report-type-tabs" aria-label="Тип документов">
+          <button class="active" type="button" data-report-type="retaildemand">
+            <span>Продажи</span><strong id="salesTabCount">0</strong>
+          </button>
+          <button type="button" data-report-type="demand">
+            <span>Отгрузки</span><strong id="demandsTabCount">0</strong>
+          </button>
+        </nav>
 
         <form id="filtersForm" class="filters">
           <div class="period-picker">
@@ -65,7 +74,7 @@
             <span>Не оплачено</span>
             <strong id="totalUnpaid">0,00 сом</strong>
           </div>
-          <div>
+          <div id="profitSummaryCard">
             <span>Чистая прибыль</span>
             <strong id="totalNetProfit">0,00 сом</strong>
           </div>
@@ -73,7 +82,7 @@
 
         <section class="table-card">
           <div class="table-title">
-            <h2>Документы</h2>
+            <h2 id="documentsTitle">Продажи</h2>
             <p id="reportStatus" class="status"></p>
           </div>
           <div id="reportRows" class="document-list">
@@ -85,6 +94,6 @@
 
     <section id="printReport" class="print-report" aria-hidden="true"></section>
 
-    <script src="/report.js" type="module"></script>
+    <script src="/report.js?v=20260623-profit-roles" type="module"></script>
   </body>
 </html>

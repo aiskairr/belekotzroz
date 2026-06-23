@@ -1,8 +1,9 @@
 import { initCrmShell } from './crm-shell.js';
 
 const els = Object.fromEntries([
-  'payrollPanel', 'filtersForm', 'dateFrom', 'dateTo', 'saveButton', 'printButton', 'searchInput',
-  'payrollRows', 'status', 'totalEmployees', 'totalRevenue', 'totalFixed', 'totalCommission', 'totalSalary'
+  'payrollPanel', 'filtersForm', 'dateFrom', 'dateTo', 'saveButton', 'printButton', 'addToExpensesButton', 'searchInput',
+  'payrollRows', 'status', 'totalEmployees', 'totalRevenue', 'totalFixed', 'totalCommission', 'totalSalary',
+  'salesModal', 'salesModalTitle', 'salesModalMeta', 'salesModalBody', 'closeSalesModal'
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 const positionLabels = {
@@ -41,8 +42,13 @@ function bindEvents() {
   els.searchInput.addEventListener('input', renderRows);
   els.payrollRows.addEventListener('change', handleRowChange);
   els.payrollRows.addEventListener('input', handleRowInput);
+  els.payrollRows.addEventListener('click', handlePayrollClick);
   els.saveButton.addEventListener('click', saveConfigs);
+  els.addToExpensesButton.addEventListener('click', addPayrollToExpenses);
   els.printButton.addEventListener('click', () => window.print());
+  els.closeSalesModal.addEventListener('click', closeSalesModal);
+  els.salesModal.addEventListener('click', (event) => { if (event.target === els.salesModal) closeSalesModal(); });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeSalesModal(); });
 }
 
 async function loadPayroll() {
@@ -94,13 +100,48 @@ function renderRow(row) {
     <td><input data-field="monthlySalary" type="number" min="0" step="100" value="${numberValue(config.monthlySalary)}"></td>
     <td><div class="percent-input"><input data-field="percent" type="number" min="0" max="100" step="0.1" value="${numberValue(config.percent)}"><span>%</span></div></td>
     <td><select data-field="percentBase"><option value="revenue" ${config.percentBase === 'revenue' ? 'selected' : ''}>Выручка</option><option value="profit" ${config.percentBase === 'profit' ? 'selected' : ''}>Прибыль</option></select></td>
-    <td class="number"><b>${formatNumber(row.documents)}</b></td>
+    <td class="number"><button class="sales-detail-button" data-sales-employee="${escapeHtml(row.id)}" type="button">${formatNumber(row.documents)} · Детали</button></td>
     <td class="number">${formatMoney(row.revenue)}</td>
     <td class="number">${formatMoney(row.profit)}</td>
     <td class="number fixed-result">${formatMoney(row.fixedSalary)}</td>
     <td class="number commission-result">${formatMoney(row.commission)}</td>
     <td class="number total-result"><strong>${formatMoney(row.totalSalary)}</strong></td>
   </tr>`;
+}
+
+function handlePayrollClick(event) {
+  const button = event.target.closest('[data-sales-employee]');
+  if (!button) return;
+  const row = getRowById(button.dataset.salesEmployee);
+  if (row) openSalesModal(row);
+}
+
+function openSalesModal(employee) {
+  const sales = employee.sales || [];
+  els.salesModalTitle.textContent = employee.name;
+  els.salesModalMeta.textContent = `${formatDate(els.dateFrom.value)} - ${formatDate(els.dateTo.value)} · ${sales.length} документов · ${formatMoney(employee.revenue)}`;
+  els.salesModalBody.innerHTML = sales.length ? sales.map(renderSaleDocument).join('') : '<div class="sales-empty">У сотрудника нет продаж за выбранный период.</div>';
+  els.salesModal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+}
+
+function renderSaleDocument(sale) {
+  const products = sale.products || [];
+  return `<article class="sale-document">
+    <div class="sale-document-head">
+      <div><span>${escapeHtml(sale.typeLabel || 'Документ')} № ${escapeHtml(sale.name || '')}</span><strong>${formatDateTime(sale.moment)}</strong></div>
+      <div><span>${escapeHtml(sale.customerName || 'Розничный покупатель')} · сумма ${formatMoney(sale.amount)}</span><strong class="${Number(sale.netProfit || 0) < 0 ? 'negative-profit' : ''}">Прибыль: ${formatMoney(sale.netProfit)}</strong></div>
+      ${sale.webUrl ? `<a href="${escapeHtml(sale.webUrl)}" target="_blank" rel="noopener noreferrer">Открыть в МойСклад</a>` : ''}
+    </div>
+    <div class="sale-products">
+      ${products.map((product) => `<div><span><b>${escapeHtml(product.code || '-')}</b>${escapeHtml(product.name || 'Товар')}</span><span>${formatQuantity(product.quantity)} шт</span><span>${formatMoney(product.price)}</span><strong>${formatMoney(product.sum)}</strong></div>`).join('') || '<p>Позиции не найдены.</p>'}
+    </div>
+  </article>`;
+}
+
+function closeSalesModal() {
+  els.salesModal?.classList.add('hidden');
+  document.body.classList.remove('modal-open');
 }
 
 function options(items, selected) {
@@ -211,6 +252,39 @@ async function saveConfigs() {
   }
 }
 
+async function addPayrollToExpenses() {
+  const amount = roundMoney(report.totals?.totalSalary || 0);
+  if (amount <= 0) {
+    els.status.textContent = 'Сначала рассчитайте зарплату: сумма к выплате равна нулю.';
+    return;
+  }
+
+  const period = `${formatDate(els.dateFrom.value)} - ${formatDate(els.dateTo.value)}`;
+  if (!window.confirm(`Добавить зарплату ${formatMoney(amount)} за период ${period} в расходы?`)) return;
+
+  els.addToExpensesButton.disabled = true;
+  els.status.textContent = 'Добавляю зарплату в расходы...';
+  try {
+    await api('/api/expenses', {
+      method: 'POST',
+      body: {
+        expenseDate: els.dateTo.value,
+        category: 'fixed',
+        subcategory: 'Зарплата сотрудников',
+        amount,
+        branchName: '',
+        paymentMethod: '',
+        description: `Зарплата за период ${period}. Сотрудников в расчете: ${Number(report.totals?.employees || 0)}.`
+      }
+    });
+    els.status.textContent = `Зарплата ${formatMoney(amount)} добавлена в расходы.`;
+  } catch (error) {
+    els.status.textContent = error.message;
+  } finally {
+    els.addToExpensesButton.disabled = false;
+  }
+}
+
 function setCurrentMonth() { setMonth(0); }
 function setMonth(offset) {
   const now = new Date();
@@ -241,6 +315,8 @@ function roundMoney(value) { return Math.round((Number(value || 0) + Number.EPSI
 function formatNumber(value) { return new Intl.NumberFormat('ru-RU').format(Number(value || 0)); }
 function formatMoney(value) { return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value || 0))} сом`; }
 function formatDate(value) { return new Intl.DateTimeFormat('ru-RU').format(new Date(`${value}T00:00:00`)); }
+function formatDateTime(value) { return value ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value.replace(' ', 'T'))) : '-'; }
+function formatQuantity(value) { return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value || 0)); }
 function escapeHtml(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;'); }
 
 async function api(url, options = {}) {

@@ -11,7 +11,7 @@
       <form id="crmLoginForm" class="crm-login-card">
         <div class="crm-login-brand"><span>O</span><div><strong>Ordo CRM</strong><small>Продажи, учет и автоматизация</small></div></div>
         <div><p class="eyebrow">Защищенный доступ</p><h1>Вход в систему</h1><p>Возможности CRM зависят от вашей роли.</p></div>
-        <label><span>Логин</span><input id="crmLogin" autocomplete="username" required></label>
+        <label><span>Сотрудник</span><select id="crmLogin" autocomplete="username" required><option value="">Загружаю сотрудников...</option></select></label>
         <label><span>Пароль</span><input id="crmPassword" type="password" autocomplete="current-password" required></label>
         <button type="submit">Войти</button>
         <p id="crmLoginStatus" class="status"></p>
@@ -43,12 +43,16 @@
         <div><strong>Ordo CRM</strong><small>МойСклад</small></div>
       </div>
       <nav class="crm-nav" aria-label="Основная навигация">
-        <a class="active" href="/" data-roles="admin owner employee">Продажи</a>
-        <a href="/report.html" data-roles="admin owner accountant employee">Отчетность</a>
-        <a href="/payroll.html" data-roles="admin owner">Зарплаты</a>
-        <a href="/price-formula.html" data-roles="admin owner accountant">Расчет цен</a>
-        <a href="/audit.html" data-roles="admin owner">Журнал действий</a>
-        <a href="/about.html">О системе</a>
+        <a id="salesNavLink" class="active" href="/sales.html" data-permission="sales">Продажи</a>
+        <a id="debtSaleNavLink" href="/debt-sale.html" data-permission="debtSale">Продать в долг</a>
+        <a href="/deliveries.html" data-permission="deliveries">Доставки</a>
+        <a href="/report.html" data-permission="reports">Отчетность</a>
+        <a href="/expenses.html" data-permission="expenses">Расходы</a>
+        <a href="/payroll.html" data-permission="payroll">Зарплаты</a>
+        <a href="/price-formula.html" data-permission="priceFormula">Расчет цен</a>
+        <a href="/audit.html" data-permission="audit">Журнал действий</a>
+        <a href="/users.html" data-permission="users">Сотрудники и доступ</a>
+        <a href="/about.html" data-permission="about">О системе</a>
       </nav>
       <div class="crm-sidebar-foot">
         <button id="openSettingsButton" class="crm-settings-button" type="button">Настройки</button>
@@ -62,12 +66,13 @@
     <header id="crmTopbar" class="crm-topbar hidden">
       <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Открыть меню">☰</button>
       <div>
-        <strong>Оформление продажи</strong>
+        <strong id="crmPageTitle">Оформление продажи</strong>
         <span id="crmBranchLabel">Филиал не выбран</span>
       </div>
       <div class="crm-topbar-actions">
         <span class="crm-sync-status"><i></i> МойСклад подключен</span>
         <span id="draftStatus" class="draft-status">Черновик не сохранен</span>
+        <a class="debts-topbar-button" href="/debt-sale.html">Продать в долг</a>
         <button id="switchBranchButton" class="switch-branch-button" type="button"><span>Филиал</span><b id="switchBranchName">Выбрать</b></button>
         <button id="clearDraftButton" class="clear-draft-button" type="button">Очистить черновик</button>
         <button id="topSettingsButton" class="profile-button" type="button"><span id="profileInitials">OR</span><b id="topUserName">Ordo</b></button>
@@ -77,9 +82,9 @@
     <main class="app">
       <section class="crm-overview wide">
         <div>
-          <p class="eyebrow">Рабочее место сотрудника</p>
-          <h1>Новая продажа</h1>
-          <p>Добавьте товары, выберите оплату и создайте документ в МойСклад.</p>
+          <p id="saleOverviewEyebrow" class="eyebrow">Рабочее место сотрудника</p>
+          <h1 id="saleOverviewTitle">Новая продажа</h1>
+          <p id="saleOverviewText">Добавьте товары, выберите оплату и создайте документ в МойСклад.</p>
         </div>
         <div class="process-steps" aria-label="Этапы продажи">
           <span class="active"><b>1</b> Товары</span>
@@ -141,23 +146,19 @@
             </div>
           </section>
 
-          <fieldset class="wide payment-scenario">
+          <fieldset id="paymentScenarioField" class="wide payment-scenario">
             <legend>Оплата</legend>
-            <label>
+            <label data-sale-payment-option>
               <input type="radio" name="paymentScenario" value="cash" checked>
               <span>Наличными</span>
             </label>
-            <label>
+            <label data-sale-payment-option>
               <input type="radio" name="paymentScenario" value="bank">
               <span>Банк</span>
             </label>
-            <label>
+            <label data-sale-payment-option>
               <input type="radio" name="paymentScenario" value="mixed">
               <span>Смешанная</span>
-            </label>
-            <label>
-              <input type="radio" name="paymentScenario" value="debt">
-              <span>Долг</span>
             </label>
           </fieldset>
 
@@ -177,9 +178,24 @@
           </label>
 
           <label id="paymentTypeField" class="wide">
-            <span>Тип оплаты</span>
+            <span id="paymentTypeFieldLabel">Тип оплаты</span>
             <select id="paymentType" name="paymentType"></select>
           </label>
+
+          <label id="secondPaymentTypeField" class="hidden">
+            <span>Банк №2</span>
+            <select id="secondPaymentType" name="secondPaymentType"></select>
+          </label>
+
+          <label id="secondBankAmountField" class="hidden">
+            <span>Сумма через банк №2</span>
+            <input id="secondBankAmount" name="secondBankAmount" inputmode="decimal" value="0">
+          </label>
+
+          <div id="mixedBankSplit" class="bank-split-preview wide hidden">
+            <div><span id="primaryBankPreviewLabel">Банк №1</span><strong id="primaryBankAmountPreview">0,00 сом</strong></div>
+            <div><span id="secondBankPreviewLabel">Банк №2</span><strong id="secondBankAmountPreview">0,00 сом</strong></div>
+          </div>
 
           <label class="wide">
             <span>Сотрудник</span>
@@ -235,6 +251,19 @@
             <input id="customerAddress" name="customerAddress" placeholder="Город, улица, дом">
           </label>
 
+          <section class="delivery-option wide">
+            <label class="delivery-toggle">
+              <input id="deliveryEnabled" name="deliveryEnabled" type="checkbox">
+              <span><strong>Нужна доставка</strong><small>Укажите товары, адрес и время доставки</small></span>
+            </label>
+            <div id="deliveryFields" class="delivery-fields hidden">
+              <label><span>Дата доставки</span><input id="deliveryDate" name="deliveryDate" type="date"></label>
+              <label><span>Время доставки</span><input id="deliveryTime" name="deliveryTime" type="time"></label>
+              <label class="wide"><span>Адрес доставки</span><input id="deliveryAddress" name="deliveryAddress" placeholder="Город, улица, дом, ориентир"></label>
+              <label class="wide"><span>Комментарий для доставки</span><input id="deliveryNotes" name="deliveryNotes" placeholder="Например: позвонить за 30 минут"></label>
+            </div>
+          </section>
+
           <p id="customerDuplicateWarning" class="inline-warning wide hidden"></p>
 
           <section id="loyaltyPanel" class="loyalty-panel wide hidden">
@@ -252,6 +281,17 @@
             <div class="loyalty-preview">
               <span id="loyaltyAccrualPreview">Начислится: 0 бонусов</span>
               <span id="loyaltyLimitPreview">Максимум списания: 0 бонусов</span>
+            </div>
+          </section>
+
+          <section class="receipt-photo-field wide">
+            <label>
+              <span>Фото чека <b>*</b></span>
+              <input id="receiptPhoto" name="receiptPhoto" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required>
+            </label>
+            <div id="receiptPhotoPreview" class="receipt-photo-preview hidden">
+              <img id="receiptPhotoImage" alt="Предпросмотр чека">
+              <div><strong id="receiptPhotoName"></strong><span>Фото будет отправлено в Telegram и не попадет в МойСклад.</span><button id="clearReceiptPhoto" type="button">Удалить фото</button></div>
             </div>
           </section>
 
@@ -361,6 +401,6 @@
 
     <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
-    <script src="/app.js?v=20260620-branch-switch" type="module"></script>
+    <script src="/app.js?v=20260623-telegram-receipt" type="module"></script>
   </body>
 </html>
