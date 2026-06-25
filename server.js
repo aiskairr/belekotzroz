@@ -312,8 +312,12 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/products') {
       requireCrmPermission(req, 'sales');
-      const search = url.searchParams.get('search') || '';
+      const search = (url.searchParams.get('search') || '').trim();
       const storeHref = url.searchParams.get('storeHref') || '';
+      if (search.length < 2) {
+        sendJson(res, 200, { products: [] });
+        return;
+      }
       const products = await getMoySkladProducts(search, storeHref);
       sendJson(res, 200, { products });
       return;
@@ -447,7 +451,9 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      validateTelegramReceiptInput(body.receiptPhoto);
+      if (body.receiptPhoto) {
+        validateTelegramReceiptInput(body.receiptPhoto);
+      }
       const result = calculate(await hydrateOrderItemCosts(body));
       await assertLoyaltyRedemptionAllowed(result, body);
       const document = await createMoySkladDocument(result, body);
@@ -463,7 +469,9 @@ const server = createServer(async (req, res) => {
       payrollReportCache.clear();
       salesReportCache.clear();
       const loyalty = await applyLoyaltySafely(result, body, document);
-      const telegramReceipt = await sendTelegramReceiptSafely(body.receiptPhoto, result, body, document);
+      const telegramReceipt = body.receiptPhoto
+        ? await sendTelegramReceiptSafely(body.receiptPhoto, result, body, document)
+        : { sent: false, skipped: true };
       const payload = { calculation: result, document, loyalty, delivery, deliveryError, telegramReceipt };
       await writeAudit({
         user,
@@ -2957,10 +2965,12 @@ async function getPayrollReport(input) {
   const cached = payrollReportCache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < 30_000) return cached.value;
 
-  const [employees, salesReport] = await Promise.all([
+  const [employees, salesReport, crmPayrollUsers] = await Promise.all([
     getMoySkladEmployees(),
-    getSalesReport({ dateFrom, dateTo, retailStoreHref: '', storeHref: '' })
+    getSalesReport({ dateFrom, dateTo, retailStoreHref: '', storeHref: '' }),
+    getCrmPayrollUsers()
   ]);
+  const crmPayrollByName = buildCrmPayrollLookup(crmPayrollUsers);
   const salesByEmployee = new Map();
   let unassignedDocuments = 0;
   let unassignedRevenue = 0;
@@ -2992,6 +3002,12 @@ async function getPayrollReport(input) {
 
   const rows = employees.map((employee) => {
     const payroll = normalizePayrollConfig(employee.payroll);
+    const crmPayrollUser = findCrmPayrollUser(employee, crmPayrollByName);
+    if (crmPayrollUser) {
+      payroll.position = 'other';
+      payroll.customPosition = crmPayrollUser.position || '';
+      payroll.monthlySalary = crmPayrollUser.salary || 0;
+    }
     const sales = salesByEmployee.get(employee.href)
       || salesByEmployee.get(normalizeEmployeeKey(employee.name))
       || { documents: 0, revenue: 0, profit: 0, categoryBonus: 0, sales: [] };
@@ -3053,6 +3069,35 @@ function normalizePayrollDate(value) {
 
 function normalizeEmployeeKey(value) {
   return String(value || '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ');
+}
+
+function getEmployeeLookupKeys(value) {
+  const normalized = normalizeEmployeeKey(value);
+  if (!normalized) return [];
+  const compact = normalized.replace(/[^a-zа-яё0-9]/giu, '');
+  const firstWord = normalized.split(/[\s,]+/).filter(Boolean)[0] || '';
+  return [...new Set([normalized, compact, firstWord].filter(Boolean))];
+}
+
+function buildCrmPayrollLookup(users) {
+  const lookup = new Map();
+  for (const user of users || []) {
+    for (const key of [
+      ...getEmployeeLookupKeys(user.name),
+      ...getEmployeeLookupKeys(user.login)
+    ]) {
+      if (!lookup.has(key)) lookup.set(key, user);
+    }
+  }
+  return lookup;
+}
+
+function findCrmPayrollUser(employee, lookup) {
+  for (const key of getEmployeeLookupKeys(employee?.name)) {
+    const found = lookup.get(key);
+    if (found) return found;
+  }
+  return null;
 }
 
 function calculateProratedMonthlySalary(monthlySalary, dateFrom, dateTo) {
@@ -3761,11 +3806,48 @@ async function getCrmLoginUsers() {
 }
 
 async function getManagedCrmUsers() {
-  const rows = await supabaseGet('/rest/v1/crm_users', {
-    select: 'id,login,name,position,role,branches,permissions,active,password_hash,created_at,updated_at',
-    order: 'name.asc'
-  });
+  let rows;
+  try {
+    rows = await supabaseGet('/rest/v1/crm_users', {
+      select: 'id,login,name,position,salary,role,branches,permissions,active,password_hash,created_at,updated_at',
+      order: 'name.asc'
+    });
+  } catch {
+    rows = await supabaseGet('/rest/v1/crm_users', {
+      select: 'id,login,name,position,role,branches,permissions,active,password_hash,created_at,updated_at',
+      order: 'name.asc'
+    });
+  }
   return rows.map(sanitizeManagedCrmUser);
+}
+
+async function getCrmPayrollUsers() {
+  let rows;
+  try {
+    rows = await supabaseGet('/rest/v1/crm_users', {
+      select: 'id,login,name,position,salary,role,active',
+      active: 'eq.true',
+      order: 'name.asc'
+    });
+  } catch {
+    try {
+      rows = await supabaseGet('/rest/v1/crm_users', {
+        select: 'id,login,name,position,role,active',
+        active: 'eq.true',
+        order: 'name.asc'
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    login: row.login || '',
+    name: row.name || '',
+    position: row.position || getCrmRoleLabel(row.role),
+    salary: clampPayrollNumber(row.salary, 0, 10000000)
+  }));
 }
 
 async function authenticateCrmUser(login, password) {
@@ -3824,6 +3906,7 @@ async function updateManagedCrmUser(id, input, actor) {
     name: String(input.name || '').trim().slice(0, 120),
     login: String(input.login || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 60),
     position: String(input.position || '').trim().slice(0, 120),
+    salary: clampPayrollNumber(input.salary, 0, 10000000),
     role,
     branches,
     permissions,
@@ -3841,6 +3924,7 @@ async function updateManagedCrmUser(id, input, actor) {
     body: JSON.stringify(payload)
   });
   if (!rows[0]) throw httpError(404, 'Сотрудник не найден.');
+  payrollReportCache.clear();
   return sanitizeManagedCrmUser(rows[0]);
 }
 
@@ -3850,6 +3934,7 @@ function sanitizeManagedCrmUser(row) {
     login: row.login,
     name: row.name,
     position: row.position || '',
+    salary: clampPayrollNumber(row.salary, 0, 10000000),
     role: row.role,
     branches: normalizeCrmBranches(row.branches),
     permissions: normalizeCrmPermissions(row.role, row.permissions),

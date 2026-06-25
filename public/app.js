@@ -31,6 +31,13 @@ const receiptPhotoPreview = document.querySelector('#receiptPhotoPreview');
 const receiptPhotoImage = document.querySelector('#receiptPhotoImage');
 const receiptPhotoName = document.querySelector('#receiptPhotoName');
 const clearReceiptPhotoButton = document.querySelector('#clearReceiptPhoto');
+const openReceiptCameraButton = document.querySelector('#openReceiptCamera');
+const receiptCameraPanel = document.querySelector('#receiptCameraPanel');
+const receiptCameraVideo = document.querySelector('#receiptCameraVideo');
+const receiptCameraCanvas = document.querySelector('#receiptCameraCanvas');
+const captureReceiptPhotoButton = document.querySelector('#captureReceiptPhoto');
+const closeReceiptCameraButton = document.querySelector('#closeReceiptCamera');
+const receiptCameraStatus = document.querySelector('#receiptCameraStatus');
 const crmLoginScreen = document.querySelector('#crmLoginScreen');
 const crmLoginForm = document.querySelector('#crmLoginForm');
 const crmLoginStatus = document.querySelector('#crmLoginStatus');
@@ -88,6 +95,7 @@ const fields = {
   loyaltyRedemption: document.querySelector('#loyaltyRedemption'),
   customerName: document.querySelector('#customerName'),
   customerPhone: document.querySelector('#customerPhone'),
+  customerAddressField: document.querySelector('#customerAddressField'),
   customerAddress: document.querySelector('#customerAddress'),
   deliveryEnabled: document.querySelector('#deliveryEnabled'),
   deliveryFields: document.querySelector('#deliveryFields'),
@@ -135,6 +143,10 @@ let customers = [];
 let orderItems = [];
 let searchTimer;
 let productSearchRequestId = 0;
+let productSearchController = null;
+const productSearchCache = new Map();
+const MIN_PRODUCT_SEARCH_LENGTH = 2;
+const PRODUCT_CACHE_LIMIT = 60;
 let customerSearchTimer;
 let duplicateCustomerTimer;
 let loyaltyCustomerTimer;
@@ -148,6 +160,7 @@ let submitInProgress = false;
 let selectedBranch = '';
 let productsLoading = false;
 let productsReady = false;
+let receiptCameraStream = null;
 let lastCreatedOrder = null;
 let currentCrmUser = null;
 let appInitialized = false;
@@ -192,6 +205,9 @@ function configureSaleMode() {
   if (eyebrow) eyebrow.textContent = 'Отдельный режим';
   if (overviewTitle) overviewTitle.textContent = 'Оформление продажи в долг';
   if (overviewText) overviewText.textContent = 'Используйте этот раздел только в исключительных случаях.';
+  receiptPhotoInput.required = false;
+  const receiptLabel = receiptPhotoInput.closest('label')?.querySelector('span');
+  if (receiptLabel) receiptLabel.innerHTML = 'Фото чека <small>(необязательно)</small>';
 }
 
 async function boot() {
@@ -284,9 +300,8 @@ async function initializeSalesApp() {
     await loadEmployees();
     await loadStores();
     await loadCustomers();
-    setAppPreloader(true, 'Загружаю товары...');
-    await loadProducts('', { throwOnError: true });
     productsReady = true;
+    renderProductResults();
     renderCustomerMode();
     initBranchSelection();
     restoreDraft();
@@ -397,10 +412,20 @@ addMissingCustomerButton.addEventListener('click', () => {
 });
 
 fields.productSearch.addEventListener('input', () => {
-  renderProductResults('Ищу товары...');
   window.clearTimeout(searchTimer);
+  const search = fields.productSearch.value.trim();
+  if (search.length < MIN_PRODUCT_SEARCH_LENGTH) {
+    productSearchController?.abort();
+    productSearchController = null;
+    products = [];
+    refreshItemProductOptions();
+    renderProductResults();
+    return;
+  }
+
+  renderProductResults('Ищу товары...');
   searchTimer = window.setTimeout(() => {
-    loadProducts(fields.productSearch.value);
+    loadProducts(search);
   }, 350);
 });
 
@@ -452,6 +477,7 @@ fields.deliveryEnabled.addEventListener('change', () => {
     if (!fields.deliveryAddress.value.trim()) fields.deliveryAddress.value = fields.customerAddress.value.trim();
   }
   renderDeliveryFields();
+  renderCustomerMode();
   renderOrderItems();
   scheduleDraftSave();
 });
@@ -464,10 +490,16 @@ fields.customerAddress.addEventListener('input', () => {
 fields.deliveryAddress.addEventListener('input', () => { fields.deliveryAddress.dataset.edited = 'true'; });
 
 receiptPhotoInput.addEventListener('change', renderReceiptPhotoPreview);
+openReceiptCameraButton?.addEventListener('click', openReceiptCamera);
+captureReceiptPhotoButton?.addEventListener('click', captureReceiptPhoto);
+closeReceiptCameraButton?.addEventListener('click', closeReceiptCamera);
 clearReceiptPhotoButton.addEventListener('click', () => {
   receiptPhotoInput.value = '';
+  closeReceiptCamera();
   renderReceiptPhotoPreview();
 });
+
+window.addEventListener('pagehide', () => closeReceiptCamera());
 
 for (const radio of document.querySelectorAll('input[name="customerMode"]')) {
   radio.addEventListener('change', () => {
@@ -532,8 +564,11 @@ form.addEventListener('submit', async (event) => {
     validateLoyaltyBeforeSubmit();
 
     const payload = getPayload();
-    setStatus('Подготавливаю фото чека...', '');
-    payload.receiptPhoto = await prepareReceiptPhoto();
+    const hasReceiptPhoto = Boolean(receiptPhotoInput.files?.[0]);
+    if (hasReceiptPhoto || !debtSaleMode) {
+      setStatus('Подготавливаю фото чека...', '');
+      payload.receiptPhoto = await prepareReceiptPhoto();
+    }
     payload.requestKey = crypto.randomUUID();
     const response = await fetch('/api/orders', {
       method: 'POST',
@@ -558,6 +593,7 @@ form.addEventListener('submit', async (event) => {
     showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${telegramText}${telegramErrorText}${loyaltyText}`);
     setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${telegramText}${telegramErrorText}${loyaltyText}`, data.deliveryError || data.telegramReceipt?.error ? 'error' : 'success');
     receiptPhotoInput.value = '';
+    closeReceiptCamera();
     renderReceiptPhotoPreview();
     await loadLoyaltyCustomer();
   } catch (error) {
@@ -619,19 +655,36 @@ async function loadCustomers(search = '') {
 }
 
 async function loadProducts(search = '', options = {}) {
-  const requestId = ++productSearchRequestId;
-  setProductsLoading(true);
-  const params = new URLSearchParams();
-  if (search.trim()) {
-    params.set('search', search.trim());
+  const normalizedSearch = search.trim();
+  if (normalizedSearch.length < MIN_PRODUCT_SEARCH_LENGTH) {
+    products = [];
+    refreshItemProductOptions();
+    renderProductResults();
+    return;
   }
+
+  const requestId = ++productSearchRequestId;
+  const params = new URLSearchParams();
+  params.set('search', normalizedSearch);
   const selectedStore = getSelectedStore();
   if (selectedStore?.storeHref) {
     params.set('storeHref', selectedStore.storeHref);
   }
+  const cacheKey = params.toString();
+  if (productSearchCache.has(cacheKey)) {
+    products = productSearchCache.get(cacheKey);
+    refreshItemProductOptions();
+    renderProductResults();
+    updateCalculation();
+    return;
+  }
+
+  productSearchController?.abort();
+  productSearchController = new AbortController();
+  setProductsLoading(true);
 
   try {
-    const response = await fetch(`/api/products?${params}`);
+    const response = await fetch(`/api/products?${params}`, { signal: productSearchController.signal });
     const data = await response.json();
     if (!response.ok) {
       throw new Error(data.error || 'Не удалось загрузить товары.');
@@ -642,10 +695,17 @@ async function loadProducts(search = '', options = {}) {
     }
 
     products = Array.isArray(data.products) ? data.products : [];
+    productSearchCache.set(cacheKey, products);
+    if (productSearchCache.size > PRODUCT_CACHE_LIMIT) {
+      productSearchCache.delete(productSearchCache.keys().next().value);
+    }
     refreshItemProductOptions();
     renderProductResults();
     updateCalculation();
   } catch (error) {
+    if (error.name === 'AbortError') {
+      return;
+    }
     if (requestId === productSearchRequestId) {
       products = [];
       renderProductResults(error.message || 'Не удалось загрузить товары.');
@@ -663,7 +723,6 @@ async function loadProducts(search = '', options = {}) {
 
 function setProductsLoading(loading) {
   productsLoading = loading;
-  fields.productSearch.disabled = loading && !fields.productSearch.value.trim();
   addItemButton.disabled = loading;
   addItemButton.textContent = loading ? 'Загружаю товары...' : 'Добавить товар +';
   if (loading) {
@@ -686,6 +745,10 @@ function renderProductResults(message = '') {
 
   if (!query) {
     fields.productResults.append(createSearchState('Начните вводить название или код товара.'));
+    return;
+  }
+  if (query.length < MIN_PRODUCT_SEARCH_LENGTH) {
+    fields.productResults.append(createSearchState(`Введите минимум ${MIN_PRODUCT_SEARCH_LENGTH} символа для поиска.`));
     return;
   }
 
@@ -1089,7 +1152,13 @@ function selectBranch(branchKey) {
   updateCrmProgress();
   scheduleDraftSave();
   if (productsReady) {
-    loadProducts(fields.productSearch.value);
+    productSearchController?.abort();
+    products = [];
+    refreshItemProductOptions();
+    renderProductResults();
+    if (fields.productSearch.value.trim().length >= MIN_PRODUCT_SEARCH_LENGTH) {
+      loadProducts(fields.productSearch.value);
+    }
   }
 }
 
@@ -1185,7 +1254,20 @@ function renderCustomerResults(message = '') {
 }
 
 function renderCustomerMode() {
-  const mode = getCustomerMode();
+  let mode = getCustomerMode();
+  const deliveryEnabled = fields.deliveryEnabled.checked;
+  const retailModeInput = document.querySelector('input[name="customerMode"][value="retail"]');
+  if (retailModeInput) {
+    retailModeInput.disabled = deliveryEnabled;
+    retailModeInput.closest('label')?.classList.toggle('disabled', deliveryEnabled);
+  }
+  if (deliveryEnabled && mode === 'retail') {
+    const newModeInput = document.querySelector('input[name="customerMode"][value="new"]');
+    if (newModeInput) {
+      newModeInput.checked = true;
+      mode = 'new';
+    }
+  }
   const existing = mode === 'existing';
   const retail = mode === 'retail';
   fields.customerSearchField.classList.toggle('hidden', !existing);
@@ -1193,16 +1275,16 @@ function renderCustomerMode() {
   fields.existingCustomerField.classList.add('hidden');
   fields.customerName.readOnly = existing;
   fields.customerName.required = mode === 'new';
-  fields.customerPhone.required = mode === 'new';
-  fields.customerName.closest('label').classList.toggle('hidden', retail);
-  fields.customerPhone.closest('label').classList.toggle('hidden', retail);
-  fields.customerAddress.closest('label').classList.toggle('hidden', retail);
+  fields.customerPhone.required = mode === 'new' || deliveryEnabled;
+  fields.customerName.closest('label').classList.toggle('hidden', retail && !deliveryEnabled);
+  fields.customerPhone.closest('label').classList.toggle('hidden', retail && !deliveryEnabled);
+  renderDeliveryFields();
   renderMissingCustomerAction();
   renderDuplicateCustomerWarning();
   renderCustomerResults();
   if (existing) {
     applySelectedCustomer();
-  } else if (retail) {
+  } else if (retail && !deliveryEnabled) {
     fields.customerName.value = '';
     fields.customerPhone.value = '';
     fields.customerAddress.value = '';
@@ -1474,18 +1556,21 @@ function validateBeforeSubmit() {
     throw new Error('Выберите тип оплаты.');
   }
   const receiptFile = receiptPhotoInput.files?.[0];
-  if (!receiptFile) {
+  if (!receiptFile && !debtSaleMode) {
     receiptPhotoInput.focus();
     throw new Error('Добавьте фотографию чека. Это обязательное поле.');
   }
-  if (!receiptFile.type.startsWith('image/')) throw new Error('Файл чека должен быть изображением.');
-  if (receiptFile.size > 15 * 1024 * 1024) throw new Error('Фото чека слишком большое. Максимум 15 МБ.');
+  if (receiptFile && !receiptFile.type.startsWith('image/')) throw new Error('Файл чека должен быть изображением.');
+  if (receiptFile && receiptFile.size > 15 * 1024 * 1024) throw new Error('Фото чека слишком большое. Максимум 15 МБ.');
   if (getPaymentScenario() === 'mixed' && parseMoney(fields.secondBankAmount.value || 0) > 0 && !getSelectedSecondPaymentType()) {
     fields.secondPaymentType.focus();
     throw new Error('Выберите второй банк для смешанной оплаты.');
   }
 
   const mode = getCustomerMode();
+  if (fields.deliveryEnabled.checked && mode === 'retail') {
+    throw new Error('Для доставки выберите нового или старого клиента.');
+  }
   if (mode === 'new') {
     if (!fields.customerName.value.trim()) {
       fields.customerName.focus();
@@ -1519,6 +1604,69 @@ function validateBeforeSubmit() {
       throw new Error('Выберите хотя бы один товар для доставки.');
     }
   }
+}
+
+async function openReceiptCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    receiptCameraStatus.textContent = 'Камера в этом браузере недоступна. Загрузите фото файлом.';
+    return;
+  }
+
+  try {
+    closeReceiptCamera({ keepPanel: true });
+    receiptCameraStatus.textContent = 'Запрашиваю доступ к камере...';
+    receiptCameraPanel.classList.remove('hidden');
+    receiptCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    receiptCameraVideo.srcObject = receiptCameraStream;
+    await receiptCameraVideo.play();
+    receiptCameraStatus.textContent = 'Наведи камеру на чек и нажми “Сделать фото”.';
+  } catch (error) {
+    closeReceiptCamera();
+    receiptCameraStatus.textContent = '';
+    setStatus(error.name === 'NotAllowedError'
+      ? 'Доступ к камере запрещен. Разрешите камеру в браузере или загрузите фото файлом.'
+      : 'Не удалось открыть камеру. Загрузите фото файлом.', 'error');
+  }
+}
+
+function closeReceiptCamera(options = {}) {
+  if (receiptCameraStream) {
+    receiptCameraStream.getTracks().forEach((track) => track.stop());
+    receiptCameraStream = null;
+  }
+  receiptCameraVideo.srcObject = null;
+  if (!options.keepPanel) {
+    receiptCameraPanel.classList.add('hidden');
+  }
+}
+
+async function captureReceiptPhoto() {
+  if (!receiptCameraStream || !receiptCameraVideo.videoWidth) {
+    receiptCameraStatus.textContent = 'Камера еще не готова.';
+    return;
+  }
+
+  receiptCameraCanvas.width = receiptCameraVideo.videoWidth;
+  receiptCameraCanvas.height = receiptCameraVideo.videoHeight;
+  const context = receiptCameraCanvas.getContext('2d');
+  context.drawImage(receiptCameraVideo, 0, 0, receiptCameraCanvas.width, receiptCameraCanvas.height);
+
+  const blob = await new Promise((resolve) => receiptCameraCanvas.toBlob(resolve, 'image/jpeg', 0.9));
+  if (!blob) {
+    receiptCameraStatus.textContent = 'Не удалось сделать фото. Попробуйте еще раз.';
+    return;
+  }
+
+  const file = new File([blob], `receipt-camera-${Date.now()}.jpg`, { type: 'image/jpeg' });
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  receiptPhotoInput.files = transfer.files;
+  renderReceiptPhotoPreview();
+  closeReceiptCamera();
+  setStatus('Фото чека добавлено с камеры.', 'success');
 }
 
 function renderReceiptPhotoPreview() {
@@ -1911,7 +2059,7 @@ function getPayload() {
     customerHref: getSelectedCustomer()?.href || '',
     customerName: fields.customerName.value.trim(),
     customerPhone: fields.customerPhone.value.trim(),
-    customerAddress: fields.customerAddress.value.trim(),
+    customerAddress: (fields.customerAddress.value || fields.deliveryAddress.value).trim(),
     delivery: {
       enabled: deliveryEnabled,
       scheduledAt: deliveryDateTime,
@@ -1925,7 +2073,23 @@ function getPayload() {
 }
 
 function renderDeliveryFields() {
-  fields.deliveryFields.classList.toggle('hidden', !fields.deliveryEnabled.checked);
+  const enabled = fields.deliveryEnabled.checked;
+  fields.deliveryEnabled.setAttribute('aria-expanded', String(enabled));
+  fields.deliveryFields.classList.toggle('hidden', !enabled);
+  fields.deliveryFields.toggleAttribute('hidden', !enabled);
+  fields.customerAddressField?.classList.toggle('hidden', !enabled);
+
+  for (const field of [fields.deliveryDate, fields.deliveryTime, fields.deliveryAddress, fields.deliveryNotes]) {
+    field.disabled = !enabled;
+  }
+
+  fields.deliveryDate.required = enabled;
+  fields.deliveryTime.required = enabled;
+  fields.deliveryAddress.required = enabled;
+
+  if (!enabled) {
+    fields.deliveryAddress.dataset.edited = '';
+  }
 }
 
 function setDefaultDeliverySchedule() {

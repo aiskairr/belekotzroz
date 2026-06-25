@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Рассрочка в МойСклад</title>
-    <link rel="stylesheet" href="/styles.css?v=20260623-gifts">
+    <link rel="stylesheet" href="/styles.css?v=20260625-delivery-client">
   </head>
   <body>
     <section id="crmLoginScreen" class="crm-login-screen">
@@ -246,14 +246,14 @@
             <input id="customerPhone" name="customerPhone" placeholder="+996 ..." required>
           </label>
 
-          <label class="wide">
+          <label id="customerAddressField" class="wide hidden">
             <span>Адрес клиента</span>
             <input id="customerAddress" name="customerAddress" placeholder="Город, улица, дом">
           </label>
 
           <section class="delivery-option wide">
             <label class="delivery-toggle">
-              <input id="deliveryEnabled" name="deliveryEnabled" type="checkbox">
+              <input id="deliveryEnabled" name="deliveryEnabled" type="checkbox" aria-controls="deliveryFields" aria-expanded="false">
               <span><strong>Нужна доставка</strong><small>Укажите товары, адрес и время доставки</small></span>
             </label>
             <div id="deliveryFields" class="delivery-fields hidden">
@@ -289,6 +289,19 @@
               <span>Фото чека <b>*</b></span>
               <input id="receiptPhoto" name="receiptPhoto" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required>
             </label>
+            <div class="receipt-photo-actions">
+              <button id="openReceiptCamera" class="secondary-button" type="button">Сфотографировать с камеры</button>
+              <span>Можно загрузить файл или снять чек на компьютере.</span>
+            </div>
+            <div id="receiptCameraPanel" class="receipt-camera-panel hidden">
+              <video id="receiptCameraVideo" autoplay playsinline muted></video>
+              <canvas id="receiptCameraCanvas" hidden></canvas>
+              <div class="receipt-camera-actions">
+                <button id="captureReceiptPhoto" type="button">Сделать фото</button>
+                <button id="closeReceiptCamera" class="secondary-button" type="button">Закрыть камеру</button>
+              </div>
+              <p id="receiptCameraStatus"></p>
+            </div>
             <div id="receiptPhotoPreview" class="receipt-photo-preview hidden">
               <img id="receiptPhotoImage" alt="Предпросмотр чека">
               <div><strong id="receiptPhotoName"></strong><span>Фото будет отправлено в Telegram и не попадет в МойСклад.</span><button id="clearReceiptPhoto" type="button">Удалить фото</button></div>
@@ -401,6 +414,6 @@
 
     <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
-    <script src="/app.js?v=20260623-gifts" type="module"></script>
+    <script src="/app.js?v=20260625-debt-optional-receipt" type="module"></script>
   </body>
 </html>

@@ -3,18 +3,18 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Ordo CRM автоматизирует продажи, рассрочку, документы МойСклад и управленческую отчетность.">
+    <meta name="description" content="Ordo CRM автоматизирует продажи, рассрочку, документы МойСклад, доставки, расходы, зарплаты и управленческую отчетность.">
     <title>Ordo CRM — продажи, учет и автоматизация</title>
-    <link rel="stylesheet" href="/about.css">
+    <link rel="stylesheet" href="/about.css?v=20260625-polish">
   </head>
   <body>
     <header class="site-header">
       <a class="brand" href="/about.html"><span>O</span><strong>Ordo CRM</strong></a>
       <nav aria-label="Навигация">
-        <a href="#capabilities">Возможности</a>
         <a href="#workflow">Как работает</a>
-        <a href="/report.html">Отчеты</a>
-        <a class="nav-action" href="#demo">Демо</a>
+        <a href="#capabilities">Возможности</a>
+        <a href="#roles">Роли</a>
+        <a class="nav-action" href="/sales.html">Войти в CRM</a>
       </nav>
     </header>
 
@@ -23,18 +23,19 @@
         <div class="hero-backdrop" aria-hidden="true"></div>
         <div class="hero-inner">
           <div class="hero-copy reveal">
-            <p class="eyebrow"><span></span> CRM для розничных продаж</p>
+            <p class="eyebrow"><span></span> Управление розничным магазином</p>
             <h1>Ordo CRM</h1>
-            <p class="hero-offer">Продажа оформляется за минуты. МойСклад заполняется сам.</p>
-            <p class="lead">Товары, рассрочка, смешанная оплата, клиенты, бонусы, документы и отчеты соединены в одном понятном рабочем месте.</p>
+            <p class="hero-offer">Рабочее место магазина, которое закрывает продажи, контроль и деньги.</p>
+            <p class="lead">Ordo CRM убирает ручные таблицы вокруг МойСклад: продавец оформляет сделку, система считает оплату, создает документы и собирает данные для владельца.</p>
             <div class="hero-actions">
-              <a class="primary" href="#demo">Запустить демо <span>→</span></a>
-              <a class="secondary" href="/sales.html">Открыть систему</a>
+              <a class="primary" href="/sales.html">Открыть CRM <span>→</span></a>
+              <a class="secondary" href="#workflow">Посмотреть процесс</a>
             </div>
             <div class="trust-row">
               <span><i></i> МойСклад API</span>
+              <span><i></i> Ролевой доступ</span>
               <span><i></i> Два филиала</span>
-              <span><i></i> Защищенные отчеты</span>
+              <span><i></i> Управленческие отчеты</span>
             </div>
           </div>
 
@@ -48,8 +49,8 @@
                 <aside>
                   <span class="selected">Продажа</span>
                   <span>Отчетность</span>
-                  <span>Бухгалтерия</span>
-                  <span>Настройки</span>
+                  <span>Доставки</span>
+                  <span>Расходы</span>
                 </aside>
                 <div class="scene-content">
                   <div class="scene-title"><span>Новая продажа</span><small>Аю-Гранд</small></div>
@@ -58,15 +59,24 @@
                     <strong>36 000 сом</strong>
                   </div>
                   <div class="scene-payment">
-                    <span>Наличные</span><span class="active">Банк</span><span>Смешанная</span><span>Долг</span>
+                    <span>Наличные</span><span class="active">Банк</span><span>Смешанная</span><span>QR</span>
                   </div>
                   <div class="scene-total">
                     <div><small>Оплачено сразу</small><strong>4 000 сом</strong></div>
                     <div><small>В рассрочку</small><strong>32 000 сом</strong></div>
                   </div>
+                  <div class="scene-meta">
+                    <span>Клиент: розница</span>
+                    <span>Доставка: сегодня</span>
+                  </div>
                   <button type="button">Создать документ</button>
                 </div>
               </div>
+            </div>
+            <div class="floating-card revenue-card">
+              <small>Выручка сегодня</small>
+              <strong>148 700 сом</strong>
+              <span>+23% к прошлой неделе</span>
             </div>
             <div class="success-toast">
               <span>✓</span><div><strong>Документ создан</strong><small>Данные отправлены в МойСклад</small></div>
@@ -79,14 +89,14 @@
       <section id="impact" class="impact section-shell">
         <div class="impact-intro reveal">
           <p class="eyebrow dark"><span></span> Результат автоматизации</p>
-          <h2>Не еще одна программа.<br>Рабочая система магазина.</h2>
-          <p>Сотруднику не нужно знать устройство МойСклад. Он выполняет привычные действия, а система берет сложную часть на себя.</p>
+          <h2>Не просто красивая оболочка.<br>Рабочая система магазина.</h2>
+          <p>Сотруднику не нужно разбираться в сложных настройках МойСклад. Он делает привычные действия, а система берет документы, расчеты и контроль на себя.</p>
         </div>
         <div class="metric-strip reveal">
-          <article><strong data-counter="4">0</strong><span>сценария оплаты</span></article>
+          <article><strong data-counter="10">0</strong><span>рабочих разделов</span></article>
           <article><strong data-counter="2">0</strong><span>филиала в одной системе</span></article>
-          <article><strong data-counter="1">0</strong><span>единый источник данных</span></article>
-          <article><strong data-counter="0">0</strong><span>ручных Excel-таблиц</span></article>
+          <article><strong data-counter="1">0</strong><span>центр управления</span></article>
+          <article><strong data-counter="4">0</strong><span>уровня контроля доступа</span></article>
         </div>
       </section>
 
@@ -94,7 +104,7 @@
         <div class="section-shell">
           <div class="section-heading reveal">
             <div><p class="eyebrow dark"><span></span> Один понятный процесс</p><h2>От товара до готового документа</h2></div>
-            <p>Каждый этап связан со следующим. Данные не приходится переносить вручную между сотрудником, бухгалтером и владельцем.</p>
+            <p>Каждый шаг связан со следующим. Данные не приходится переносить вручную между продавцом, бухгалтером и владельцем.</p>
           </div>
 
           <div class="workflow-grid">
@@ -104,15 +114,15 @@
             </article>
             <article class="workflow-step reveal">
               <span>02</span><div class="step-visual payment-visual"><b>Наличные</b><b>QR</b><b class="selected">M+ 6 мес</b></div>
-              <h3>Расчет оплаты</h3><p>Наличные, QR, банк, долг или смешанная оплата рассчитываются автоматически.</p>
+              <h3>Расчет оплаты</h3><p>Наличные, QR, банк или смешанная оплата. Два банка и комиссии рассчитываются автоматически.</p>
             </article>
             <article class="workflow-step reveal">
               <span>03</span><div class="step-visual client-visual"><i>АБ</i><div><strong>Абдурасул Байке</strong><small>+996 555 000 000</small></div></div>
-              <h3>Клиент и сотрудник</h3><p>Новый, постоянный или розничный клиент. Система сохраняет автора продажи.</p>
+              <h3>Клиент и сотрудник</h3><p>Новый, постоянный или розничный клиент. Система фиксирует автора продажи и филиал.</p>
             </article>
             <article class="workflow-step reveal">
               <span>04</span><div class="step-visual document-visual"><i>✓</i><div><strong>Продажа №00473</strong><small>Создана в МойСклад</small></div></div>
-              <h3>Готовый документ</h3><p>Продажа или отгрузка создается с оплатой, полями и готовой печатной формой.</p>
+              <h3>Готовый документ</h3><p>Продажа или отгрузка создается с оплатой, чеком, доставкой и журналом действий.</p>
             </article>
           </div>
         </div>
@@ -122,37 +132,37 @@
         <div class="section-shell">
           <div class="section-heading reveal">
             <div><p class="eyebrow dark"><span></span> Сценарий для показа</p><h2>Демо за 3 минуты</h2></div>
-            <p>Готовая последовательность, чтобы спокойно показать систему на встрече: без лишних настроек, только понятный результат.</p>
+            <p>Короткий сценарий для встречи: показать путь продавца, документ в МойСклад и управленческий контроль.</p>
           </div>
           <div class="demo-layout">
             <article class="demo-card reveal">
               <span>01</span>
               <h3>Оформить продажу</h3>
-              <p>Выберите филиал, найдите товар, добавьте клиента и тип оплаты. Система сама рассчитает сумму, долг, банк и комиссию.</p>
+              <p>Выберите филиал, найдите товары, отметьте доставку или подарок и укажите способ оплаты. Итог считается сразу.</p>
               <a href="/sales.html">Перейти к продаже</a>
             </article>
             <article class="demo-card reveal">
               <span>02</span>
               <h3>Проверить документ</h3>
-              <p>После создания откройте документ в МойСклад или распечатайте накладную/чек прямо из системы.</p>
+              <p>После создания откройте документ в МойСклад, распечатайте накладную или чек. Фото чека уходит в Telegram.</p>
               <a href="/sales.html">Создать документ</a>
             </article>
             <article class="demo-card reveal">
               <span>03</span>
               <h3>Показать отчетность</h3>
-              <p>Откройте отчет по дню: сумма, оплачено, не оплачено, прибыль, товары и сотрудник видны в одном месте.</p>
+              <p>Откройте отчет по периоду: продажи и отгрузки разделены, платежи сгруппированы, прибыль скрыта по ролям.</p>
               <a href="/report.html">Открыть отчеты</a>
             </article>
             <article class="demo-card reveal">
               <span>04</span>
               <h3>Показать расчет цен</h3>
-              <p>Бухгалтер вводит курс и наценку, а система пересчитывает закупку USD в продажную цену 3-6.</p>
+              <p>Выберите группу и шаблон: система пересчитает оптовую, минимальную и банковские цены с проверкой округления.</p>
               <a href="/price-formula.html">Расчет цен</a>
             </article>
           </div>
           <div class="demo-script reveal">
             <h3>Что говорить на показе</h3>
-            <p>“Это CRM-обертка над МойСклад: сотрудник работает в простом интерфейсе, а система сама создает документы, считает оплату, долг, комиссию банка, печатные формы и отчетность для владельца.”</p>
+            <p>«Сотрудник работает в простом интерфейсе, а Ordo создает документы в МойСклад, считает оплату и прибыль, ведет доставки, расходы, зарплаты и ролевую отчетность».</p>
           </div>
         </div>
       </section>
@@ -160,26 +170,32 @@
       <section id="capabilities" class="capabilities section-shell">
         <div class="section-heading reveal">
           <div><p class="eyebrow dark"><span></span> Единая система</p><h2>Все, что нужно магазину каждый день</h2></div>
-          <p>Интерфейс разделен по ролям: сотрудник продает, бухгалтер управляет ценами, владелец контролирует показатели.</p>
+          <p>Интерфейс разделен по ролям: продавец оформляет сделки, бухгалтер управляет ценами, владелец контролирует показатели.</p>
         </div>
         <div class="capability-layout">
           <article class="feature-large reveal">
-            <div class="feature-copy"><span>Продажи</span><h3>Рабочее место сотрудника</h3><p>Добавление нескольких товаров, поиск клиентов, выбор филиала и любой сценарий оплаты без лишних полей.</p></div>
-            <div class="feature-ui sales-ui"><div></div><div></div><div class="wide"></div><button type="button">Создать документ</button></div>
+            <div class="feature-copy"><span>Продажи</span><h3>Рабочее место продавца</h3><p>Несколько товаров, остатки по выбранному складу, клиенты, подарки, доставка и разные способы оплаты в одном процессе.</p></div>
+            <div class="feature-ui sales-ui">
+              <div><small>Филиал</small><strong>Беш-Сары</strong></div>
+              <div><small>Клиент</small><strong>Розница</strong></div>
+              <div class="wide"><small>Корзина</small><strong>3 товара</strong><span>Итого: 62 400 сом</span></div>
+              <button type="button">Создать документ</button>
+            </div>
           </article>
-          <article class="feature-small accounting reveal"><span>Бухгалтерия</span><h3>Массовое управление ценами</h3><p>Изменение цен по формуле с предварительным просмотром и безопасным подтверждением.</p><div class="bars"><i></i><i></i><i></i></div></article>
+          <article class="feature-small accounting reveal"><span>Ценообразование</span><h3>Массовое управление ценами</h3><p>Шаблоны по группам, диапазоны наценки, USD/KGS и предварительная проверка перед сохранением.</p><div class="bars"><i></i><i></i><i></i></div></article>
           <article class="feature-small reports reveal"><span>Управление</span><h3>Отчетность владельца</h3><p>Продажи, оплата, задолженность и прибыль по периоду, филиалу и сотруднику.</p><div class="mini-chart"><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
-          <article class="feature-wide reveal"><div><span>Лояльность</span><h3>Клиенты возвращаются</h3><p>Бонусы начисляются автоматически, а доступный баланс виден прямо при продаже.</p></div><div class="bonus-card"><small>Баланс клиента</small><strong>2 480</strong><span>бонусов</span></div></article>
+          <article class="feature-wide reveal"><div><span>Операционный контроль</span><h3>Доставки, расходы и зарплаты</h3><p>Владелец видит движение денег, выплаты сотрудникам и статусы доставки, не собирая данные по разным чатам.</p></div><div class="bonus-card"><small>Контроль</small><strong>3</strong><span>контура в одной CRM</span></div></article>
         </div>
       </section>
 
-      <section class="roles-band">
+      <section id="roles" class="roles-band">
         <div class="section-shell roles-inner">
           <div class="roles-copy reveal"><p class="eyebrow"><span></span> Для всей команды</p><h2>Каждому — свой понятный инструмент</h2><p>Без перегруженных экранов и доступа к лишним данным.</p></div>
           <div class="role-list reveal">
             <article><b>01</b><div><strong>Сотрудник</strong><span>Оформляет продажу и печатает документы</span></div></article>
             <article><b>02</b><div><strong>Бухгалтер</strong><span>Управляет ценами и проверяет операции</span></div></article>
-            <article><b>03</b><div><strong>Владелец</strong><span>Видит продажи, долги и чистую прибыль</span></div></article>
+            <article><b>03</b><div><strong>Менеджер</strong><span>Контролирует филиал и видит разрешенные отчеты</span></div></article>
+            <article><b>04</b><div><strong>Владелец</strong><span>Видит продажи, расходы, зарплаты и чистую прибыль</span></div></article>
           </div>
         </div>
       </section>
@@ -191,6 +207,6 @@
     </main>
 
     <footer><a class="brand dark-brand" href="/sales.html"><span>O</span><strong>Ordo CRM</strong></a><p>Продажи, учет и автоматизация</p><span>2026</span></footer>
-    <script src="/about.js" type="module"></script>
+    <script src="/about.js?v=20260625-polish" type="module"></script>
   </body>
 </html>

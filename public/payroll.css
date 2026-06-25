@@ -43,6 +43,16 @@ td select, td input { min-width: 120px; }
 .employee-cell span { display: grid; gap: 3px; }
 .employee-cell small { color: #758196; }
 .custom-position { margin-top: 6px; }
+.readonly-payroll-field,
+.readonly-input {
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #f4f7fb;
+  color: #344054;
+  font-weight: 750;
+}
+.readonly-payroll-field { min-height: 38px; padding: 9px 10px; }
+.readonly-input { cursor: default; }
 .percent-input { display: flex; align-items: center; gap: 5px; }
 .percent-input span { color: #69768a; font-weight: 800; }
 .number { text-align: right; white-space: nowrap; }

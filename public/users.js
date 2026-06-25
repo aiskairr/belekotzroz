@@ -69,6 +69,7 @@ function renderUsers() {
         <label><span>Имя</span><input data-field="name" value="${escapeAttr(entry.name)}" ${disabled}></label>
         <label><span>Логин</span><input data-field="login" value="${escapeAttr(entry.login)}" ${disabled}></label>
         <label><span>Должность</span><input data-field="position" value="${escapeAttr(entry.position)}" ${disabled}></label>
+        <label><span>Оклад</span><input data-field="salary" type="number" min="0" step="100" value="${numberValue(entry.salary)}" ${disabled}></label>
         <label><span>Роль</span><select data-field="role" ${disabled}>${Object.entries(roles).filter(([value]) => user.role === 'admin' || value !== 'admin' || value === entry.role).map(([value, label]) => `<option value="${value}" ${value === entry.role ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
       </div>
       <div class="access-grid">
@@ -139,6 +140,7 @@ async function saveUser(event) {
     name: field('name').value,
     login: field('login').value,
     position: field('position').value,
+    salary: Number(field('salary').value || 0),
     role: field('role').value,
     active: field('active').checked,
     password: field('password').value,
@@ -174,5 +176,6 @@ function showToast(message, error = false) {
 }
 
 function initials(value) { return String(value || '?').split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase(); }
+function numberValue(value) { return Number.isFinite(Number(value)) ? String(Number(value)) : '0'; }
 function escapeHtml(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;'); }
 function escapeAttr(value) { return escapeHtml(value); }

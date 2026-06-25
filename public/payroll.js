@@ -84,7 +84,7 @@ function renderSummary() {
 function renderRows() {
   const query = normalize(els.searchInput.value);
   const rows = (report.rows || []).filter((row) => {
-    const position = row.payroll.position === 'other' ? row.payroll.customPosition : positionLabels[row.payroll.position];
+    const position = getPayrollPositionLabel(row.payroll);
     return !query || normalize(`${row.name} ${position}`).includes(query);
   });
   els.payrollRows.innerHTML = rows.map(renderRow).join('') || '<tr><td colspan="12">Сотрудники не найдены.</td></tr>';
@@ -93,11 +93,12 @@ function renderRows() {
 
 function renderRow(row) {
   const config = row.payroll;
+  const position = getPayrollPositionLabel(config);
   return `<tr data-employee="${escapeHtml(row.id)}" data-href="${escapeHtml(row.href)}">
     <td><label class="employee-cell"><input data-field="enabled" type="checkbox" ${config.enabled ? 'checked' : ''}><span><strong>${escapeHtml(row.name)}</strong><small>${config.enabled ? 'Участвует в расчёте' : 'Расчёт выключен'}</small></span></label></td>
-    <td><select data-field="position">${options(positionLabels, config.position)}</select><input class="custom-position ${config.position === 'other' ? '' : 'hidden'}" data-field="customPosition" value="${escapeHtml(config.customPosition)}" placeholder="Должность"></td>
+    <td><div class="readonly-payroll-field">${escapeHtml(position || 'Не указана')}</div><input type="hidden" data-field="position" value="other"><input type="hidden" data-field="customPosition" value="${escapeHtml(position)}"></td>
     <td><select data-field="scheme">${options(schemeLabels, config.scheme)}</select></td>
-    <td><input data-field="monthlySalary" type="number" min="0" step="100" value="${numberValue(config.monthlySalary)}"></td>
+    <td><input data-field="monthlySalary" class="readonly-input" type="number" min="0" step="100" value="${numberValue(config.monthlySalary)}" readonly title="Оклад подтягивается из раздела Сотрудники и доступ"></td>
     <td><div class="percent-input"><input data-field="percent" type="number" min="0" max="100" step="0.1" value="${numberValue(config.percent)}"><span>%</span></div></td>
     <td><select data-field="percentBase"><option value="revenue" ${config.percentBase === 'revenue' ? 'selected' : ''}>Выручка</option><option value="profit" ${config.percentBase === 'profit' ? 'selected' : ''}>Прибыль</option></select></td>
     <td class="number"><button class="sales-detail-button" data-sales-employee="${escapeHtml(row.id)}" type="button">${formatNumber(row.documents)} · Детали</button></td>
@@ -148,6 +149,12 @@ function options(items, selected) {
   return Object.entries(items).map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`).join('');
 }
 
+function getPayrollPositionLabel(config = {}) {
+  return config.position === 'other'
+    ? config.customPosition
+    : positionLabels[config.position] || config.customPosition || '';
+}
+
 function handleRowChange(event) {
   const rowElement = event.target.closest('[data-employee]');
   if (!rowElement) return;
@@ -169,7 +176,7 @@ function syncRow(rowElement) {
   row.payroll = readConfig(rowElement);
   rowElement.classList.add('dirty');
   const custom = rowElement.querySelector('[data-field="customPosition"]');
-  custom.classList.toggle('hidden', row.payroll.position !== 'other');
+  custom?.classList.toggle('hidden', row.payroll.position !== 'other');
 }
 
 function readConfig(rowElement) {
@@ -193,6 +200,7 @@ function updateRowAvailability(row) {
   const salaryEnabled = config.enabled && ['salary', 'salary_percent', 'salary_category_bonus'].includes(config.scheme);
   const percentEnabled = config.enabled && ['percent', 'salary_percent'].includes(config.scheme);
   element.querySelector('[data-field="monthlySalary"]').disabled = !salaryEnabled;
+  element.querySelector('[data-field="monthlySalary"]').readOnly = true;
   element.querySelector('[data-field="percent"]').disabled = !percentEnabled;
   element.querySelector('[data-field="percentBase"]').disabled = !percentEnabled;
   element.classList.toggle('disabled-row', !config.enabled);

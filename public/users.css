@@ -22,7 +22,7 @@ button:disabled { cursor: wait; opacity: .6; }
 .avatar { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #243b57; color: #fff; font-weight: 900; }
 .user-card h3 { margin: 0; font-size: 17px; }.user-card header p { margin: 3px 0 0; color: #667085; font-size: 12px; }
 .active-toggle { display: flex; align-items: center; gap: 7px; margin-left: auto; font-size: 13px; font-weight: 800; }
-.identity-grid { display: grid; grid-template-columns: 1fr .8fr 1.2fr 1fr; gap: 12px; padding: 16px; }
+.identity-grid { display: grid; grid-template-columns: 1fr .8fr 1.1fr .7fr 1fr; gap: 12px; padding: 16px; }
 label { display: grid; gap: 6px; min-width: 0; } label > span, legend { color: #526075; font-size: 12px; font-weight: 800; }
 input, select { width: 100%; min-height: 42px; border: 1px solid #cbd6e2; border-radius: 6px; background: #fff; color: #172033; padding: 9px 11px; outline: none; }
 input:focus, select:focus { border-color: var(--ordo-accent, #2563eb); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ordo-accent, #2563eb) 13%, transparent); }

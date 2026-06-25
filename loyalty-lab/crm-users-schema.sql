@@ -5,6 +5,7 @@ create table if not exists public.crm_users (
   login text not null unique,
   name text not null,
   position text not null default '',
+  salary numeric not null default 0,
   role text not null check (role in ('admin', 'owner', 'manager', 'seller', 'logistics', 'accountant', 'employee')),
   branches text[] not null default '{}',
   permissions jsonb not null default '[]'::jsonb,
@@ -13,6 +14,9 @@ create table if not exists public.crm_users (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.crm_users
+  add column if not exists salary numeric not null default 0;
 
 create index if not exists crm_users_active_name_idx on public.crm_users(active, name);
 
