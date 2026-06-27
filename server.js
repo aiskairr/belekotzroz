@@ -1,14 +1,18 @@
 import { createServer } from 'node:http';
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, posix as posixPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = join(__dirname, 'public');
 const dataDir = join(__dirname, 'data');
 const auditLogPath = join(dataDir, 'audit-log.jsonl');
+const execFileAsync = promisify(execFile);
 
 loadDotEnv();
 loadDotEnv(join(__dirname, 'loyalty-lab/.env'));
@@ -67,6 +71,7 @@ const salesReportInflight = new Map();
 let currenciesCache = { value: [], createdAt: 0 };
 let currenciesInflight = null;
 let reportCurrencyExpandSupported = true;
+const staticAssetHashCache = new Map();
 const reportCookieName = 'mysrs_report_session';
 const crmCookieName = 'mysrs_crm_session_v2';
 const PRICE_FORMULA_TEMPLATE_START = '[ORDO_PRICE_TEMPLATE]';
@@ -129,6 +134,19 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/crm/session') {
       sendJson(res, 200, { user: getCrmUser(req) });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/crm/ui-settings') {
+      const user = requireAnyAuthenticatedUser(req);
+      sendJson(res, 200, { settings: await getCrmUiSettings(user) });
+      return;
+    }
+
+    if (req.method === 'PUT' && url.pathname === '/api/crm/ui-settings') {
+      const user = requireAnyAuthenticatedUser(req);
+      const settings = await updateCrmUiSettings(user, await readJson(req));
+      sendJson(res, 200, { settings });
       return;
     }
 
@@ -293,7 +311,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/retail-stores') {
-      requireAnyAuthenticatedUser(req);
+      requireAnyCrmPermission(req, ['sales', 'commercialDocuments']);
       const retailStores = await getMoySkladRetailStores();
       sendJson(res, 200, { retailStores });
       return;
@@ -311,7 +329,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/products') {
-      requireCrmPermission(req, 'sales');
+      requireAnyCrmPermission(req, ['sales', 'commercialDocuments']);
       const search = (url.searchParams.get('search') || '').trim();
       const storeHref = url.searchParams.get('storeHref') || '';
       if (search.length < 2) {
@@ -324,10 +342,86 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/customers') {
-      requireCrmPermission(req, 'sales');
+      requireAnyCrmPermission(req, ['sales', 'commercialDocuments']);
       const search = url.searchParams.get('search') || '';
       const customers = await getMoySkladCustomers(search);
       sendJson(res, 200, { customers });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/commercial-documents/word') {
+      const user = requireCrmPermission(req, 'commercialDocuments');
+      const body = await readJson(req);
+      const file = await createCommercialWordInvoice(body);
+      await writeAudit({
+        user,
+        action: 'commercial.word',
+        entity: 'invoice',
+        description: `Счет на оплату Word: ${body.customerName || 'Контрагент'}`
+      });
+      res.writeHead(200, {
+        'Content-Type': 'application/msword; charset=utf-8',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+        'Cache-Control': 'no-store'
+      });
+      res.end(file.content);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/commercial-documents/pdf') {
+      const user = requireCrmPermission(req, 'commercialDocuments');
+      let body = await readJson(req);
+      const document = body.documentType === 'demand'
+        ? await (async () => {
+            const token = requiredEnv('MOYSKLAD_TOKEN');
+            const agentHref = await getOrCreateCounterparty(token, body);
+            body = { ...body, agentHref, customerHref: body.customerHref || agentHref, customerMode: 'existing' };
+            return createCommercialDemandDocument(body);
+          })()
+        : null;
+      const file = await createCommercialPdfInvoice(body);
+      await writeAudit({
+        user,
+        action: 'commercial.pdf',
+        entity: 'invoice',
+        description: document
+          ? `PDF + отгрузка: ${document.name || ''} / ${body.customerName || 'Контрагент'}`
+          : `Счет на оплату PDF: ${body.customerName || 'Контрагент'}`
+      });
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+        'Cache-Control': 'no-store',
+        ...(document ? {
+          'X-Commercial-Document-Type': document.type || '',
+          'X-Commercial-Document-Name': encodeURIComponent(document.name || ''),
+          'X-Commercial-Document-Id': document.id || '',
+          'X-Commercial-Document-Web-Url': encodeURIComponent(getMoySkladWebUrl(document.type, document.id) || '')
+        } : {})
+      });
+      res.end(file.content);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/commercial-documents') {
+      const user = requireCrmPermission(req, 'commercialDocuments');
+      const body = await readJson(req);
+      if (body.documentType === 'demand') {
+        throw httpError(400, 'Создание отгрузки на этой странице временно отключено.');
+      }
+      const document = body.documentType === 'demand'
+        ? await createCommercialDemandDocument(body)
+        : await createCommercialMoySkladDocument(body);
+      salesReportCache.clear();
+      payrollReportCache.clear();
+      await writeAudit({
+        user,
+        action: 'commercial.create',
+        entity: document.type || 'document',
+        entityId: document.id || '',
+        description: `${document.type === 'customerorder' ? 'Счет' : 'Отгрузка'} ${document.name || ''}`
+      });
+      sendJson(res, 201, { document });
       return;
     }
 
@@ -490,7 +584,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET') {
-      await serveStatic(url.pathname, res);
+      await serveStatic(url, res);
       return;
     }
 
@@ -630,7 +724,7 @@ function calculate(input) {
 
 async function createMoySkladDocument(calculation, input) {
   const token = requiredEnv('MOYSKLAD_TOKEN');
-  const documentType = resolveDocumentType(calculation);
+  const documentType = String(input.documentType || resolveDocumentType(calculation));
   const organizationHref = requiredEnv('MOYSKLAD_ORGANIZATION_HREF');
   if (input.customerMode !== 'retail' && !String(input.customerPhone || '').trim()) {
     throw httpError(400, 'Укажите номер телефона клиента.');
@@ -980,6 +1074,285 @@ async function createIncomingPayment(token, input) {
   };
 }
 
+async function createCommercialMoySkladDocument(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const organizationHref = requiredEnv('MOYSKLAD_ORGANIZATION_HREF');
+  const documentType = String(input.documentType || 'customerorder');
+  if (!['customerorder', 'demand'].includes(documentType)) {
+    throw httpError(400, 'Выберите тип документа: счет или отгрузка.');
+  }
+
+  const items = getOrderItems(input);
+  const agentHref = await getOrCreateCounterparty(token, input);
+  const storeHref = input.storeHref || process.env.MOYSKLAD_STORE_HREF;
+
+  if (documentType === 'demand' && !storeHref) {
+    throw httpError(500, 'Для создания отгрузки нужен MOYSKLAD_STORE_HREF.');
+  }
+
+  const payload = {
+    organization: meta(organizationHref, 'organization'),
+    agent: meta(agentHref, 'counterparty'),
+    description: String(input.description || '').trim() || (documentType === 'demand' ? 'Отгрузка' : 'Счет на оплату'),
+    positions: items.map((item) => ({
+      quantity: item.quantity,
+      price: toMoySkladPrice(item.productPrice),
+      assortment: meta(item.assortmentHref, item.assortmentType)
+    }))
+  };
+
+  if (documentType === 'demand') {
+    payload.store = meta(storeHref, 'store');
+  }
+
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      'Content-Type': 'application/json;charset=utf-8'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось создать коммерческий документ в МойСклад.', data);
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    type: documentType,
+    moment: data.moment,
+    sum: data.sum,
+    meta: data.meta
+  };
+}
+
+async function createCommercialDemandDocument(input) {
+  const payload = {
+    items: Array.isArray(input.items) ? input.items : [],
+    customerMode: input.customerMode || 'new',
+    customerName: input.customerName || '',
+    customerPhone: input.customerPhone || '',
+    customerAddress: input.customerAddress || '',
+    customerInn: input.customerInn || '',
+    customerHref: input.customerHref || '',
+    storeHref: input.storeHref || '',
+    retailStoreHref: input.retailStoreHref || '',
+    branchName: input.branchName || '',
+    employeeName: input.employeeName || '',
+    paymentScenario: 'cash',
+    paymentTypeName: 'Наличными',
+    prepaymentMethodName: 'Наличными',
+    cashPrepayment: 0,
+    transferPrepayment: 0,
+    secondBankAmount: 0,
+    loyaltyRedemption: 0,
+    documentType: 'demand'
+  };
+
+  const calculation = calculate(await hydrateOrderItemCosts(payload));
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const document = await createMoySkladDocument({
+    ...calculation,
+    documentType: 'demand'
+  }, payload);
+  return document;
+}
+
+async function createCommercialWordInvoice(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const items = getOrderItems(input);
+  await getOrCreateCounterparty(token, input);
+
+  const total = roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
+  const today = new Date();
+  const invoiceNumber = `INV-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}-${String(today.getTime()).slice(-4)}`;
+  const dateLabel = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(today);
+  const html = buildCommercialInvoiceHtml(input, items, { total, invoiceNumber, dateLabel });
+
+  return {
+    name: `schet-na-oplatu-${invoiceNumber}.doc`,
+    content: Buffer.from(`\ufeff${html}`, 'utf8')
+  };
+}
+
+async function createCommercialPdfInvoice(input) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const items = await enrichInvoiceItemsWithImages(token, getOrderItems(input));
+  await getOrCreateCounterparty(token, input);
+
+  const total = roundMoney(items.reduce((sum, item) => sum + item.lineTotal, 0));
+  const today = new Date();
+  const invoiceNumber = `INV-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}-${String(today.getTime()).slice(-4)}`;
+  const dateLabel = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(today);
+  const html = buildCommercialInvoiceHtml(input, items, { total, invoiceNumber, dateLabel });
+  const content = await renderHtmlToPdf(html);
+
+  return {
+    name: `schet-na-oplatu-${invoiceNumber}.pdf`,
+    content
+  };
+}
+
+function buildCommercialInvoiceHtml(input, items, meta) {
+  const customerName = String(input.customerName || 'Контрагент').trim();
+  const customerInn = String(input.customerInn || '').trim();
+  const customerBank = String(input.customerBank || '').trim();
+  const customerBik = String(input.customerBik || '').trim();
+  const customerSettlementAccount = String(input.customerSettlementAccount || '').trim();
+  const customerCorrAccount = String(input.customerCorrAccount || '').trim();
+  const customerOkpo = String(input.customerOkpo || '').trim();
+  const customerPhone = String(input.customerPhone || '').trim();
+  const customerEmail = String(input.customerEmail || '').trim();
+  const customerAddress = String(input.customerAddress || '').trim();
+  const customerGroups = Array.isArray(input.customerGroups) ? input.customerGroups.filter(Boolean) : [];
+  const total = meta.total;
+  const invoiceNumber = meta.invoiceNumber;
+  const dateLabel = meta.dateLabel;
+
+  const rows = items.map((item, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${item.imageDataUrl ? `<img src="${item.imageDataUrl}" alt="" style="width:54px;height:54px;object-fit:contain;display:block;margin:auto;">` : ''}</td>
+      <td>${escapeWordHtml(item.productName || '')}</td>
+      <td>${escapeWordHtml(item.code || '')}</td>
+      <td>${formatMoney(item.quantity)}</td>
+      <td>${formatMoney(item.productPrice)}</td>
+      <td>${formatMoney(item.lineTotal)}</td>
+    </tr>
+  `).join('');
+
+  const html = `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>Счет на оплату</title>
+<style>
+body { font-family: Arial, sans-serif; font-size: 12pt; color: #111; }
+h1 { font-size: 18pt; margin: 0 0 8px; }
+.meta, .party { margin: 0 0 14px; }
+.meta p, .party p { margin: 4px 0; }
+table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+th, td { border: 1px solid #333; padding: 6px 8px; vertical-align: top; }
+th { background: #eef3fb; }
+.sum { margin-top: 16px; text-align: right; font-size: 13pt; }
+.words { margin-top: 8px; font-style: italic; }
+</style>
+</head>
+<body>
+  <h1>Счет на оплату</h1>
+  <div class="meta">
+    <p><strong>Номер:</strong> ${escapeWordHtml(invoiceNumber)}</p>
+    <p><strong>Дата:</strong> ${escapeWordHtml(dateLabel)}</p>
+    <p><strong>Основание:</strong> ${escapeWordHtml(String(input.description || 'Оплата товаров').trim() || 'Оплата товаров')}</p>
+  </div>
+  <div class="party">
+    <p><strong>Организация:</strong> ${escapeWordHtml(getInvoiceSellerLine())}</p>
+  </div>
+  <div class="party">
+    <p><strong>Покупатель:</strong></p>
+    <p>${escapeWordHtml(customerName)}</p>
+    ${customerInn ? `<p>ИНН ${escapeWordHtml(customerInn)}</p>` : ''}
+    ${customerOkpo ? `<p>ОКПО ${escapeWordHtml(customerOkpo)}</p>` : ''}
+    ${customerBik ? `<p>БИК ${escapeWordHtml(customerBik)}${customerBank ? ` ${escapeWordHtml(customerBank)}` : ''}</p>` : customerBank ? `<p>${escapeWordHtml(customerBank)}</p>` : ''}
+    ${customerSettlementAccount ? `<p>p/c ${escapeWordHtml(customerSettlementAccount)}</p>` : ''}
+    ${customerCorrAccount ? `<p>Корр. счет ${escapeWordHtml(customerCorrAccount)}</p>` : ''}
+    ${customerAddress ? `<p>Адрес: ${escapeWordHtml(customerAddress)}</p>` : ''}
+    ${(customerPhone || customerEmail) ? `<p>${escapeWordHtml([customerPhone, customerEmail].filter(Boolean).join('. '))}</p>` : ''}
+    ${customerGroups.length ? `<p>Группы: ${escapeWordHtml(customerGroups.join(', '))}</p>` : ''}
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:5%">#</th>
+        <th style="width:10%">Фото</th>
+        <th style="width:33%">Товар</th>
+        <th style="width:14%">Артикул</th>
+        <th style="width:10%">Кол-во</th>
+        <th style="width:14%">Цена</th>
+        <th style="width:14%">Сумма</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="sum"><strong>Всего: ${escapeWordHtml(formatMoney(total))}</strong></div>
+  <div class="sum"><strong>К оплате: ${escapeWordHtml(formatMoney(total))}</strong></div>
+  <div>в том числе НДС: 0,00</div>
+  <div>в том числе НСП: 0,00</div>
+  <div class="sum">Всего наименований ${items.length}, на сумму ${escapeWordHtml(formatMoney(total))} KGS</div>
+  <div class="words">${escapeWordHtml(numberToRussianSom(total))}</div>
+  <div style="margin-top:28px;">Руководитель ____________________ ${escapeWordHtml(getInvoiceDirectorName())}</div>
+</body>
+</html>`;
+  return html;
+}
+
+async function renderHtmlToPdf(html) {
+  const chromePath = process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const workdir = await mkdtemp(join(tmpdir(), 'mysrs-invoice-'));
+  const htmlPath = join(workdir, 'invoice.html');
+  const pdfPath = join(workdir, 'invoice.pdf');
+
+  try {
+    await writeFile(htmlPath, html, 'utf8');
+    await execFileAsync(chromePath, [
+      '--headless=new',
+      '--disable-gpu',
+      '--allow-file-access-from-files',
+      '--no-pdf-header-footer',
+      `--print-to-pdf=${pdfPath}`,
+      htmlPath
+    ], { timeout: 30000 });
+    return await readFile(pdfPath);
+  } catch (error) {
+    throw httpError(500, 'Не удалось сформировать PDF-счет.', { message: error.message });
+  } finally {
+    await rm(workdir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function enrichInvoiceItemsWithImages(token, items) {
+  return mapWithConcurrency(items, 3, async (item) => ({
+    ...item,
+    imageDataUrl: await getMoySkladProductImageDataUrl(token, item.assortmentHref).catch(() => '')
+  }));
+}
+
+async function getMoySkladProductImageDataUrl(token, productHref) {
+  if (!productHref) return '';
+
+  const response = await moySkladFetch(`${productHref}/images?limit=1`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok) return '';
+
+  const image = Array.isArray(data?.rows) ? data.rows[0] : null;
+  const downloadHref = image?.miniature?.downloadHref
+    || image?.tiny?.downloadHref
+    || image?.downloadHref
+    || image?.meta?.downloadHref
+    || '';
+  if (!downloadHref) return '';
+
+  const imageResponse = await moySkladFetch(downloadHref, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'image/*'
+    }
+  });
+  if (!imageResponse.ok) return '';
+  const mimeType = imageResponse.headers.get('content-type') || 'image/png';
+  const buffer = Buffer.from(await imageResponse.arrayBuffer());
+  return `data:${mimeType};base64,${buffer.toString('base64')}`;
+}
+
 function shouldCreateRetailDemand(calculation) {
   const paymentName = String(calculation.paymentType || '').toLowerCase();
   const debtPayment = paymentName.includes('долг');
@@ -1022,6 +1395,7 @@ function getOrderItems(input) {
 
     return {
       productName: item.productName || `Позиция ${index + 1}`,
+      code: String(item.code || item.article || '').trim(),
       assortmentHref,
       assortmentType,
       productPrice,
@@ -1119,6 +1493,9 @@ function isCashPrepaymentMethod(methodName) {
 }
 
 async function getOrCreateCounterparty(token, input) {
+  if (input.agentHref) {
+    return input.agentHref;
+  }
   if (input.customerMode === 'retail') {
     return requiredEnv('MOYSKLAD_AGENT_HREF');
   }
@@ -1143,14 +1520,41 @@ async function getOrCreateCounterparty(token, input) {
     description: 'Создано автоматически из приложения рассрочки'
   };
 
+  const tags = Array.isArray(input.customerGroups) ? input.customerGroups.filter((value) => String(value || '').trim()) : [];
+  const bank = String(input.customerBank || '').trim();
+  const bik = String(input.customerBik || '').trim();
+  const settlementAccount = String(input.customerSettlementAccount || '').trim();
+  const corrAccount = String(input.customerCorrAccount || '').trim();
+  const okpo = String(input.customerOkpo || '').trim();
+  const email = String(input.customerEmail || '').trim();
+
+  const descriptionLines = ['Создано автоматически из приложения рассрочки'];
+  if (bank) descriptionLines.push(`Банк: ${bank}`);
+  if (bik) descriptionLines.push(`БИК: ${bik}`);
+  if (settlementAccount) descriptionLines.push(`Расчетный счет: ${settlementAccount}`);
+  if (corrAccount) descriptionLines.push(`Корр. счет: ${corrAccount}`);
+  if (okpo) descriptionLines.push(`ОКПО: ${okpo}`);
+  payload.description = descriptionLines.join('\n');
+
+  const inn = String(input.customerInn || '').trim();
+  if (inn) {
+    payload.inn = inn;
+  }
+
   const phone = String(input.customerPhone || '').trim();
   if (phone) {
     payload.phone = phone;
+  }
+  if (email) {
+    payload.email = email;
   }
 
   const address = String(input.customerAddress || '').trim();
   if (address) {
     payload.actualAddress = address;
+  }
+  if (tags.length) {
+    payload.tags = tags;
   }
 
   const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/counterparty`, {
@@ -1175,12 +1579,34 @@ async function updateCounterpartyContact(token, href, input) {
   const payload = {};
   const phone = String(input.customerPhone || '').trim();
   const address = String(input.customerAddress || '').trim();
+  const bank = String(input.customerBank || '').trim();
+  const bik = String(input.customerBik || '').trim();
+  const settlementAccount = String(input.customerSettlementAccount || '').trim();
+  const corrAccount = String(input.customerCorrAccount || '').trim();
+  const okpo = String(input.customerOkpo || '').trim();
+  const email = String(input.customerEmail || '').trim();
+  const tags = Array.isArray(input.customerGroups) ? input.customerGroups.filter((value) => String(value || '').trim()) : [];
 
   if (phone) {
     payload.phone = phone;
   }
+  if (email) {
+    payload.email = email;
+  }
   if (address) {
     payload.actualAddress = address;
+  }
+  if (tags.length) {
+    payload.tags = tags;
+  }
+  if (bank || bik || settlementAccount || corrAccount || okpo) {
+    const lines = [];
+    if (bank) lines.push(`Банк: ${bank}`);
+    if (bik) lines.push(`БИК: ${bik}`);
+    if (settlementAccount) lines.push(`Расчетный счет: ${settlementAccount}`);
+    if (corrAccount) lines.push(`Корр. счет: ${corrAccount}`);
+    if (okpo) lines.push(`ОКПО: ${okpo}`);
+    payload.description = lines.join('\n');
   }
   if (!Object.keys(payload).length) {
     return;
@@ -1282,6 +1708,14 @@ async function getMoySkladCustomers(search) {
     name: counterparty.name,
     phone: counterparty.phone || '',
     actualAddress: counterparty.actualAddress || '',
+    inn: counterparty.inn || '',
+    bank: getCounterpartyDescriptionField(counterparty.description, 'Банк'),
+    bik: getCounterpartyDescriptionField(counterparty.description, 'БИК'),
+    settlementAccount: getCounterpartyDescriptionField(counterparty.description, 'Расчетный счет'),
+    corrAccount: getCounterpartyDescriptionField(counterparty.description, 'Корр. счет'),
+    okpo: getCounterpartyDescriptionField(counterparty.description, 'ОКПО'),
+    groups: Array.isArray(counterparty.tags) ? counterparty.tags : [],
+    email: counterparty.email || '',
     href: counterparty.meta.href
   }));
 }
@@ -1314,6 +1748,8 @@ async function getMoySkladProducts(search, storeHref = '') {
 
   return selectedProducts.map((product, index) => {
     const cost = getProductCost(product, currenciesByHref);
+    const minPrice = getAccountingMinPrice(product, currenciesByHref);
+    const wholesalePrice = getAccountingWholesalePrice(product, currenciesByHref);
     productCostCache.set(product.meta?.href || '', { value: cost, createdAt: Date.now() });
     return {
       id: product.id,
@@ -1322,7 +1758,9 @@ async function getMoySkladProducts(search, storeHref = '') {
       article: product.article || '',
       externalCode: product.externalCode || '',
       barcode: getProductBarcode(product),
-      price: getProductPrice(product),
+      price: minPrice.value,
+      minPrice,
+      wholesalePrice,
       cost,
       stock: stockValues[index],
       href: product.meta.href,
@@ -1569,6 +2007,22 @@ function getAccountingMinPrice(product, currenciesByHref) {
     currencyName: currency.name || currency.fullName || '',
     currencyIsoCode: currency.isoCode || '',
     currencyHref: minPrice.currency?.meta?.href || ''
+  };
+}
+
+function getAccountingWholesalePrice(product, currenciesByHref) {
+  const salePrices = Array.isArray(product.salePrices) ? product.salePrices : [];
+  const wholesale = findPreferredProductSalePrice(salePrices, 'Оптовая цена');
+  const currency = resolveAccountingCurrency(wholesale?.currency, currenciesByHref);
+  const rawValue = Number(wholesale?.value || 0);
+  const value = Number.isFinite(rawValue)
+    ? (isUsdCurrency(currency) ? rawValue / 100 * getReportUsdCostRate(1) : rawValue / 100)
+    : 0;
+  return {
+    value: Number.isFinite(value) ? roundMoney(value) : 0,
+    currencyName: 'KGS',
+    currencyIsoCode: 'KGS',
+    currencyHref: wholesale?.currency?.meta?.href || ''
   };
 }
 
@@ -3310,7 +3764,9 @@ function getIdFromHref(href) {
   return String(href || '').split('/').filter(Boolean).at(-1) || '';
 }
 
-async function serveStatic(pathname, res) {
+async function serveStatic(url, res) {
+  const pathname = typeof url === 'string' ? url : url.pathname;
+  const requestedVersion = typeof url === 'string' ? '' : String(url.searchParams.get('v') || '');
   const safePath = pathname === '/'
     ? '/about.html'
     : pathname === '/sales.html' || pathname === '/debt-sale.html'
@@ -3325,13 +3781,72 @@ async function serveStatic(pathname, res) {
   }
 
   try {
-    const file = await readFile(filePath);
+    let file = await readFile(filePath);
     const type = contentTypes[extname(filePath)] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type });
+    const extension = extname(filePath);
+    if (extension === '.html') {
+      file = Buffer.from(rewriteStaticHtml(file.toString('utf8')), 'utf8');
+    } else if (extension === '.js') {
+      file = Buffer.from(rewriteStaticJsModule(file.toString('utf8'), safePath), 'utf8');
+    }
+    const currentVersion = ['.js', '.css'].includes(extension) ? getStaticAssetVersion(safePath) : '';
+    const cacheControl = currentVersion && requestedVersion && requestedVersion === currentVersion
+      ? 'public, max-age=31536000, immutable'
+      : extension === '.html'
+        ? 'no-store'
+        : 'public, max-age=300';
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': cacheControl });
     res.end(file);
   } catch {
     sendJson(res, 404, { error: 'Not found' });
   }
+}
+
+function rewriteStaticHtml(source) {
+  return source.replace(/((?:src|href)=["'])(\/[^"'?#]+\.(?:js|css))(\?[^"']*)?(["'])/gi, (_match, prefix, assetPath, _query, suffix) => {
+    const version = getStaticAssetVersion(assetPath);
+    return `${prefix}${assetPath}${version ? `?v=${version}` : ''}${suffix}`;
+  });
+}
+
+function rewriteStaticJsModule(source, modulePath) {
+  return source.replace(/((?:import|export)\s[^"'`]*?\sfrom\s*["']|import\s*\(\s*["'])((?:\.{1,2}\/|\/)[^"'?#]+\.(?:js|css))(["'])/g, (_match, prefix, assetPath, suffix) => {
+    const versioned = toVersionedModuleSpecifier(modulePath, assetPath);
+    return `${prefix}${versioned}${suffix}`;
+  });
+}
+
+function toVersionedModuleSpecifier(modulePath, assetPath) {
+  const normalized = assetPath.startsWith('/')
+    ? posixPath.normalize(assetPath)
+    : posixPath.normalize(posixPath.join(posixPath.dirname(modulePath), assetPath));
+  const version = getStaticAssetVersion(normalized.startsWith('/') ? normalized : `/${normalized}`);
+  return `${assetPath}${version ? `?v=${version}` : ''}`;
+}
+
+function getStaticAssetVersion(assetPath) {
+  const normalized = normalizeStaticAssetPath(assetPath);
+  if (!normalized) return '';
+  if (staticAssetHashCache.has(normalized)) return staticAssetHashCache.get(normalized);
+  try {
+    const content = readFileSync(join(publicDir, normalized.slice(1)));
+    const hash = createHmac('sha256', 'mysrs-static-assets')
+      .update(content)
+      .digest('hex')
+      .slice(0, 12);
+    staticAssetHashCache.set(normalized, hash);
+    return hash;
+  } catch {
+    return '';
+  }
+}
+
+function normalizeStaticAssetPath(assetPath) {
+  const pathname = String(assetPath || '').split('?')[0];
+  if (!pathname.startsWith('/')) return '';
+  const normalized = posixPath.normalize(pathname);
+  if (normalized.includes('..')) return '';
+  return normalized;
 }
 
 async function readJson(req) {
@@ -3654,6 +4169,94 @@ function formatMoney(value) {
   }).format(value);
 }
 
+function getCounterpartyDescriptionField(description, label) {
+  const text = String(description || '');
+  const match = text.match(new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*(.+)`, 'i'));
+  return match ? String(match[1] || '').trim() : '';
+}
+
+function getInvoiceSellerLine() {
+  return process.env.WORD_INVOICE_SELLER_LINE
+    || 'ИП Матаев Женишбек Камилович, ИНН 20305197500183, г.Бишкек, Ленинский район, 69 га ж/м, ул.20-я, дом №14, р/с 1280156055213894, Банк: ЗАО «Кыргызский Инвестиционно-Кредитный Банк», БИК 128015';
+}
+
+function getInvoiceDirectorName() {
+  return process.env.WORD_INVOICE_DIRECTOR_NAME || 'Матаев Ж.К';
+}
+
+function escapeWordHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function numberToRussianSom(value) {
+  const amount = Math.round(Number(value || 0) * 100);
+  const soms = Math.floor(amount / 100);
+  const tyiyn = amount % 100;
+  const words = integerToRussianWords(soms);
+  const result = `${words} ${pluralRu(soms, ['сом', 'сома', 'сомов'])} ${String(tyiyn).padStart(2, '0')} ${pluralRu(tyiyn, ['тыйын', 'тыйына', 'тыйынов'])}`;
+  return result.charAt(0).toUpperCase() + result.slice(1);
+}
+
+function integerToRussianWords(number) {
+  if (!number) return 'ноль';
+
+  const units = [
+    ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'],
+    ['', 'одна', 'две', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять']
+  ];
+  const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+  const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+  const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+  const scales = [
+    ['', '', '', 0],
+    ['тысяча', 'тысячи', 'тысяч', 1],
+    ['миллион', 'миллиона', 'миллионов', 0]
+  ];
+
+  const parts = [];
+  let rest = Math.floor(number);
+  let scaleIndex = 0;
+
+  while (rest > 0) {
+    const chunk = rest % 1000;
+    if (chunk) {
+      const gender = scales[scaleIndex]?.[3] || 0;
+      const chunkWords = [];
+      chunkWords.push(hundreds[Math.floor(chunk / 100)]);
+      const lastTwo = chunk % 100;
+      if (lastTwo >= 10 && lastTwo < 20) {
+        chunkWords.push(teens[lastTwo - 10]);
+      } else {
+        chunkWords.push(tens[Math.floor(lastTwo / 10)]);
+        chunkWords.push(units[gender][lastTwo % 10]);
+      }
+      const scale = scales[scaleIndex];
+      if (scaleIndex > 0) {
+        chunkWords.push(pluralRu(chunk, scale.slice(0, 3)));
+      }
+      parts.unshift(chunkWords.filter(Boolean).join(' '));
+    }
+    rest = Math.floor(rest / 1000);
+    scaleIndex += 1;
+  }
+
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function pluralRu(number, forms) {
+  const abs = Math.abs(Number(number || 0)) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return forms[2];
+  if (last > 1 && last < 5) return forms[1];
+  if (last === 1) return forms[0];
+  return forms[2];
+}
+
 function requiredEnv(name) {
   const value = process.env[name];
   if (!value || value.includes('00000000-0000-0000-0000-000000000000')) {
@@ -3721,7 +4324,7 @@ function sanitizeSalesReportForUser(report, user) {
 
 function requireAccountingAuth(req) {
   const user = getCrmUser(req);
-  if (user && hasCrmPermission(user, 'priceFormula')) return user;
+  if (user && (hasCrmPermission(user, 'priceFormula') || hasCrmPermission(user, 'customsCalculator'))) return user;
   if (user) throw httpError(403, 'Бухгалтерия недоступна для вашей роли.');
   if (isReportAuthenticated(req)) return { login: 'legacy-report', name: 'Бухгалтер', role: 'accountant' };
   throw httpError(401, 'Войдите в бухгалтерию.');
@@ -3760,15 +4363,15 @@ function setReportSession(res, login) {
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
 }
 
-const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'priceFormula', 'audit', 'users', 'about'];
+const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'priceFormula', 'customsCalculator', 'audit', 'users', 'about'];
 const crmRolePermissions = {
   admin: [...crmPermissionNames],
   owner: [...crmPermissionNames],
-  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'about'],
-  seller: ['sales', 'debtSale', 'deliveries', 'reports', 'about'],
-  logistics: ['sales', 'debtSale', 'deliveries', 'about'],
-  accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'about'],
-  employee: ['sales', 'debtSale', 'deliveries', 'about']
+  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'customsCalculator', 'about'],
+  seller: ['sales', 'debtSale', 'deliveries', 'reports', 'commercialDocuments', 'about'],
+  logistics: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about'],
+  accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'customsCalculator', 'about'],
+  employee: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about']
 };
 
 function getLegacyCrmUsers() {
@@ -3928,6 +4531,61 @@ async function updateManagedCrmUser(id, input, actor) {
   return sanitizeManagedCrmUser(rows[0]);
 }
 
+const defaultCrmUiSettings = Object.freeze({
+  theme: 'blue',
+  mode: 'light',
+  density: 'comfortable',
+  accentColor: '#2563eb'
+});
+
+async function getCrmUiSettings(user) {
+  if (!user?.id || String(user.id).startsWith('legacy:')) {
+    return { ...defaultCrmUiSettings };
+  }
+  try {
+    const rows = await supabaseGet('/rest/v1/crm_users', {
+      id: `eq.${user.id}`,
+      select: 'ui_settings',
+      limit: '1'
+    });
+    return normalizeCrmUiSettings(rows[0]?.ui_settings);
+  } catch {
+    return { ...defaultCrmUiSettings };
+  }
+}
+
+async function updateCrmUiSettings(user, input) {
+  const settings = normalizeCrmUiSettings(input);
+  if (!user?.id || String(user.id).startsWith('legacy:')) {
+    return settings;
+  }
+  try {
+    const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/crm_users?id=eq.${encodeURIComponent(user.id)}&select=ui_settings`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ ui_settings: settings })
+    });
+    return normalizeCrmUiSettings(rows[0]?.ui_settings);
+  } catch {
+    return settings;
+  }
+}
+
+function normalizeCrmUiSettings(input) {
+  const raw = input && typeof input === 'object' ? input : {};
+  return {
+    theme: ['blue', 'green', 'violet', 'red'].includes(raw.theme) ? raw.theme : defaultCrmUiSettings.theme,
+    mode: raw.mode === 'dark' ? 'dark' : 'light',
+    density: raw.density === 'compact' ? 'compact' : 'comfortable',
+    accentColor: normalizeHexColor(raw.accentColor, defaultCrmUiSettings.accentColor)
+  };
+}
+
+function normalizeHexColor(value, fallback = '#2563eb') {
+  const normalized = String(value || '').trim().match(/^#?([0-9a-f]{6})$/i)?.[1];
+  return normalized ? `#${normalized.toLowerCase()}` : fallback;
+}
+
 function sanitizeManagedCrmUser(row) {
   return {
     id: row.id,
@@ -4003,6 +4661,16 @@ function requireCrmPermission(req, permission) {
   const user = getCrmUser(req);
   if (!user) throw httpError(401, 'Войдите в систему.');
   if (!hasCrmPermission(user, permission)) throw httpError(403, 'У вас нет доступа к этому разделу.');
+  return user;
+}
+
+function requireAnyCrmPermission(req, permissions) {
+  const user = getCrmUser(req);
+  if (!user) throw httpError(401, 'Войдите в систему.');
+  const allowed = Array.isArray(permissions) ? permissions : [permissions];
+  if (!allowed.some((permission) => hasCrmPermission(user, permission))) {
+    throw httpError(403, 'У вас нет доступа к этому разделу.');
+  }
   return user;
 }
 

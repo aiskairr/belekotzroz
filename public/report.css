@@ -178,6 +178,22 @@ h1 {
   background: #cfe8f6;
   padding: 10px 12px;
 }
+body[data-mode="dark"] { background: #0f172a; color: #e5edf7; }
+body[data-mode="dark"] .login-card,
+body[data-mode="dark"] .filters,
+body[data-mode="dark"] .table-card,
+body[data-mode="dark"] .total-grid > div { background: #111827; color: #e5edf7; border-color: #233042; box-shadow: 0 18px 44px rgba(2,6,23,.34); }
+body[data-mode="dark"] .period-picker { border-color: #1e3a5f; background: #11253d; }
+body[data-mode="dark"] .report-type-tabs button,
+body[data-mode="dark"] button.secondary,
+body[data-mode="dark"] .header-actions a,
+body[data-mode="dark"] input,
+body[data-mode="dark"] select { background: #0f172a; color: #e5edf7; border-color: #334155; }
+body[data-mode="dark"] .report-header p,
+body[data-mode="dark"] label,
+body[data-mode="dark"] .login-card p { color: #94a3b8; }
+body[data-mode="dark"] .empty-state { border-color: #334155; background: #111827; color: #94a3b8; }
+body[data-mode="dark"] .empty-state.error { border-color: #7f1d1d; background: #32181d; color: #fecaca; }
 
 .period-tabs {
   display: flex;
@@ -343,6 +359,65 @@ body.report-profit-hidden .document-card-head {
   color: #4b5563;
   font-size: 12px;
   font-weight: 800;
+}
+
+body[data-mode="dark"] .document-card {
+  background: #111827;
+  border-color: #233042;
+}
+
+body[data-mode="dark"] .document-card-head {
+  background: #2d2f85;
+  border-bottom-color: #40439a;
+}
+
+body[data-mode="dark"] .document-card-head > div {
+  border-right-color: #4a4eb1;
+}
+
+body[data-mode="dark"] .document-card-head span {
+  color: #c7d2fe;
+}
+
+body[data-mode="dark"] .document-meta,
+body[data-mode="dark"] .document-products,
+body[data-mode="dark"] .document-actions {
+  background: #111827;
+}
+
+body[data-mode="dark"] .document-meta strong,
+body[data-mode="dark"] .document-products strong,
+body[data-mode="dark"] .document-actions strong,
+body[data-mode="dark"] .document-products td,
+body[data-mode="dark"] .document-meta td,
+body[data-mode="dark"] .document-meta div,
+body[data-mode="dark"] .document-products div {
+  color: #e5edf7;
+}
+
+body[data-mode="dark"] .document-meta span,
+body[data-mode="dark"] .document-products span,
+body[data-mode="dark"] .document-actions span,
+body[data-mode="dark"] .report-document-row td,
+body[data-mode="dark"] .report-product-row td {
+  color: #dbe7f5;
+}
+
+body[data-mode="dark"] .report-document-row td,
+body[data-mode="dark"] .report-product-row td {
+  background: #111827 !important;
+  border-color: #233042;
+}
+
+body[data-mode="dark"] .document-actions {
+  border-top-color: #233042;
+}
+
+body[data-mode="dark"] .document-actions a,
+body[data-mode="dark"] .document-actions button {
+  background: #0f172a !important;
+  color: #e5edf7 !important;
+  border: 1px solid #334155 !important;
 }
 
 .document-card-head strong {

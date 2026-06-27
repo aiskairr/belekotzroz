@@ -23,7 +23,9 @@ const permissions = {
   reportProfit: 'Показывать прибыль в отчетности',
   expenses: 'Расходы',
   payroll: 'Зарплаты',
+  commercialDocuments: 'Счета юрлицам',
   priceFormula: 'Расчет цен',
+  customsCalculator: 'Калькулятор таможни',
   audit: 'Журнал действий',
   users: 'Сотрудники и доступ',
   about: 'О системе'

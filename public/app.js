@@ -61,10 +61,12 @@ form.noValidate = true;
 
 const defaultUiSettings = {
   theme: 'blue',
+  mode: 'light',
   density: 'comfortable',
   confirmBeforeSubmit: true,
   focusProductSearch: true,
-  stickySummary: true
+  stickySummary: true,
+  accentColor: '#2563eb'
 };
 let uiSettings = loadUiSettings();
 
@@ -225,6 +227,9 @@ async function boot() {
 async function enterCrm(user) {
   currentCrmUser = user;
   document.body.dataset.role = user.role;
+  await loadUserUiSettings();
+  applyUiSettings();
+  syncSettingsControls();
   applyRoleAccess(user);
   crmLoginScreen.classList.add('hidden');
   const requestedPage = getRequestedPage();
@@ -1750,6 +1755,14 @@ function bindCrmShell() {
   document.querySelectorAll('[data-theme]').forEach((button) => {
     button.addEventListener('click', () => {
       uiSettings.theme = button.dataset.theme;
+      uiSettings.accentColor = getThemeAccent(button.dataset.theme);
+      applyUiSettings();
+      syncSettingsControls();
+    });
+  });
+  document.querySelectorAll('[data-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      uiSettings.mode = button.dataset.mode === 'dark' ? 'dark' : 'light';
       applyUiSettings();
       syncSettingsControls();
     });
@@ -1761,17 +1774,17 @@ function bindCrmShell() {
       syncSettingsControls();
     });
   });
-  document.querySelector('#saveSettingsButton')?.addEventListener('click', () => {
+  document.querySelector('#saveSettingsButton')?.addEventListener('click', async () => {
     uiSettings.confirmBeforeSubmit = document.querySelector('#confirmBeforeSubmit').checked;
     uiSettings.focusProductSearch = document.querySelector('#focusProductSearch').checked;
     uiSettings.stickySummary = document.querySelector('#stickySummary').checked;
-    localStorage.setItem('mysrsUiSettings', JSON.stringify(uiSettings));
+    await saveUserUiSettings();
     applyUiSettings();
     settingsModal.classList.add('hidden');
   });
-  document.querySelector('#resetSettingsButton')?.addEventListener('click', () => {
+  document.querySelector('#resetSettingsButton')?.addEventListener('click', async () => {
     uiSettings = { ...defaultUiSettings };
-    localStorage.removeItem('mysrsUiSettings');
+    await saveUserUiSettings();
     applyUiSettings();
     syncSettingsControls();
   });
@@ -1829,7 +1842,9 @@ function getDefaultCrmPage(user) {
     ['reports', '/report.html'],
     ['expenses', '/expenses.html'],
     ['payroll', '/payroll.html'],
+    ['commercialDocuments', '/commercial-documents.html'],
     ['priceFormula', '/price-formula.html'],
+    ['customsCalculator', '/customs-calculator.html'],
     ['audit', '/audit.html'],
     ['users', '/users.html'],
     ['about', '/about.html']
@@ -1915,21 +1930,33 @@ function clearDraft() {
 
 function loadUiSettings() {
   try {
-    return { ...defaultUiSettings, ...JSON.parse(localStorage.getItem('mysrsUiSettings') || '{}') };
+    return normalizeUiSettings(JSON.parse(localStorage.getItem('mysrsUiSettings') || '{}'));
   } catch {
     return { ...defaultUiSettings };
   }
 }
 
 function applyUiSettings() {
+  uiSettings = normalizeUiSettings(uiSettings);
+  const root = document.documentElement;
   document.body.dataset.theme = uiSettings.theme;
+  document.body.dataset.mode = uiSettings.mode;
+  root.dataset.theme = uiSettings.theme;
+  root.dataset.mode = uiSettings.mode;
+  applyAccentColor(uiSettings.accentColor);
   document.body.classList.toggle('density-compact', uiSettings.density === 'compact');
   document.body.classList.toggle('sticky-summary', Boolean(uiSettings.stickySummary));
+  localStorage.setItem('mysrsUiSettings', JSON.stringify(uiSettings));
 }
 
 function syncSettingsControls() {
+  uiSettings = normalizeUiSettings(uiSettings);
+  const currentMode = document.body.dataset.mode === 'dark' || uiSettings.mode === 'dark' ? 'dark' : 'light';
   document.querySelectorAll('[data-theme]').forEach((button) => {
     button.classList.toggle('active', button.dataset.theme === uiSettings.theme);
+  });
+  document.querySelectorAll('[data-mode]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.mode === currentMode);
   });
   document.querySelectorAll('[data-density]').forEach((button) => {
     button.classList.toggle('active', button.dataset.density === uiSettings.density);
@@ -1937,6 +1964,97 @@ function syncSettingsControls() {
   document.querySelector('#confirmBeforeSubmit').checked = Boolean(uiSettings.confirmBeforeSubmit);
   document.querySelector('#focusProductSearch').checked = Boolean(uiSettings.focusProductSearch);
   document.querySelector('#stickySummary').checked = Boolean(uiSettings.stickySummary);
+}
+
+function normalizeUiSettings(input = {}) {
+  const theme = ['blue', 'green', 'violet', 'red'].includes(input.theme) ? input.theme : defaultUiSettings.theme;
+  const mode = input.mode === 'dark' ? 'dark' : 'light';
+  const density = input.density === 'compact' ? 'compact' : 'comfortable';
+  const accentColor = normalizeHexColor(input.accentColor) || getThemeAccent(theme);
+  return {
+    ...defaultUiSettings,
+    ...input,
+    theme,
+    mode,
+    density,
+    accentColor,
+    confirmBeforeSubmit: input.confirmBeforeSubmit ?? defaultUiSettings.confirmBeforeSubmit,
+    focusProductSearch: input.focusProductSearch ?? defaultUiSettings.focusProductSearch,
+    stickySummary: input.stickySummary ?? defaultUiSettings.stickySummary
+  };
+}
+
+function normalizeHexColor(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '';
+}
+
+function getThemeAccent(theme) {
+  const accents = {
+    blue: '#2563eb',
+    green: '#16805b',
+    violet: '#6d5bd0',
+    red: '#c2414b'
+  };
+  return accents[theme] || defaultUiSettings.accentColor;
+}
+
+function applyAccentColor(color) {
+  const accent = normalizeHexColor(color) || defaultUiSettings.accentColor;
+  const soft = `color-mix(in srgb, ${accent} 12%, white)`;
+  const dark = `color-mix(in srgb, ${accent} 82%, black)`;
+  [document.documentElement, document.body].forEach((node) => {
+    node.style.setProperty('--crm-accent', accent);
+    node.style.setProperty('--crm-accent-soft', soft);
+    node.style.setProperty('--crm-accent-dark', dark);
+  });
+}
+
+async function loadUserUiSettings() {
+  const localSettings = loadUiSettings();
+  uiSettings = normalizeUiSettings(localSettings);
+  if (!currentCrmUser) return;
+  try {
+    const response = await fetch('/api/crm/ui-settings');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error || 'Не удалось загрузить настройки CRM.');
+    const remoteSettings = normalizeUiSettings(data?.settings || {});
+    uiSettings = normalizeUiSettings({
+      ...remoteSettings,
+      ...localSettings,
+      theme: localSettings.theme || remoteSettings.theme,
+      mode: localSettings.mode || remoteSettings.mode,
+      density: localSettings.density || remoteSettings.density,
+      accentColor: localSettings.accentColor || remoteSettings.accentColor,
+      confirmBeforeSubmit: typeof localSettings.confirmBeforeSubmit === 'boolean'
+        ? localSettings.confirmBeforeSubmit
+        : remoteSettings.confirmBeforeSubmit,
+      focusProductSearch: typeof localSettings.focusProductSearch === 'boolean'
+        ? localSettings.focusProductSearch
+        : remoteSettings.focusProductSearch,
+      stickySummary: typeof localSettings.stickySummary === 'boolean'
+        ? localSettings.stickySummary
+        : remoteSettings.stickySummary
+    });
+  } catch {
+    uiSettings = normalizeUiSettings(localSettings);
+  }
+}
+
+async function saveUserUiSettings() {
+  uiSettings = normalizeUiSettings(uiSettings);
+  localStorage.setItem('mysrsUiSettings', JSON.stringify(uiSettings));
+  if (!currentCrmUser) return;
+  try {
+    await fetch('/api/crm/ui-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(uiSettings)
+    });
+  } catch {
+    // keep local fallback for sales page if API is temporarily unavailable
+  }
 }
 
 function updateCrmProgress() {

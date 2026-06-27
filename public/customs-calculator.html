@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Калькулятор таможни</title>
+    <link rel="stylesheet" href="/customs-calculator.css?v=20260627-customs-expenses-label-fix">
+    <link rel="stylesheet" href="/crm-shell.css?v=20260626-dark-fix">
+  </head>
+  <body>
+    <main class="customs-app">
+      <section id="customsPanel" class="customs-panel hidden">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Импорт и себестоимость</p>
+            <h1>Калькулятор таможни</h1>
+            <p>Заполняйте разные товары вручную, указывайте закупку, валюту, количество и расходы по каждой позиции. Каталог МойСклад можно использовать только как помощник.</p>
+          </div>
+        </header>
+
+        <section class="customs-toolbar">
+          <label>
+            <span>Курс USD → KGS</span>
+            <input id="usdRateInput" type="number" min="0" step="0.01" value="89">
+          </label>
+          <label class="search-field">
+            <span>Поиск в каталоге МойСклад</span>
+            <input id="productSearchInput" type="search" placeholder="Название, код или артикул">
+          </label>
+          <button id="reloadCatalogButton" class="secondary" type="button">Обновить каталог</button>
+          <button id="addManualRowButton" type="button">Добавить товар</button>
+          <button id="clearRowsButton" class="secondary danger" type="button">Очистить всё</button>
+        </section>
+
+        <section class="summary-grid">
+          <article><span>Товаров в расчёте</span><strong id="rowsCount">0</strong></article>
+          <article><span>Общее кол-во шт.</span><strong id="unitsCount">0</strong></article>
+          <article><span>Общий вес, кг</span><strong id="weightTotal">0</strong></article>
+          <article><span>Общий объем, м³</span><strong id="volumeTotal">0</strong></article>
+          <article><span>Закупка</span><strong id="buyTotal">0,00 сом</strong></article>
+          <article><span>Доп. расходы партии</span><strong id="expensesTotal">0,00 сом</strong></article>
+          <article class="summary-primary"><span>Себестоимость партии</span><strong id="landedTotal">0,00 сом</strong></article>
+        </section>
+
+        <section class="customs-party-card">
+          <div class="section-heading">
+            <div>
+              <h2>Общие расходы партии</h2>
+              <p>Эти суммы относятся ко всей поставке целиком и автоматически распределяются на товары по количеству штук.</p>
+            </div>
+          </div>
+          <div class="customs-party-grid">
+            <label>
+              <span>Растаможка от брокера за партию, сом</span>
+              <input id="partyCustomsClearanceInput" type="number" min="0" step="0.01" value="0">
+            </label>
+          </div>
+        </section>
+
+        <section class="customs-search-card">
+          <div class="section-heading">
+            <div>
+              <h2>Результаты поиска</h2>
+              <p id="catalogStatus">Каталог загружается. Этот блок необязателен, товары можно заводить полностью вручную.</p>
+            </div>
+          </div>
+          <div id="searchResults" class="customs-search-results"></div>
+        </section>
+
+        <section class="customs-rows-card">
+          <div class="section-heading">
+            <div>
+              <h2>Товары в партии</h2>
+              <p>Каждая строка может быть отдельным товаром с ручным названием, артикулом и валютой закупки. Все расходы ниже вводятся за 1 штуку, а общая сумма партии считается автоматически по количеству.</p>
+            </div>
+          </div>
+          <div id="rowsList" class="customs-rows-list"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/customs-calculator.js?v=20260627-customs-expenses-label-fix" type="module"></script>
+  </body>
+</html>

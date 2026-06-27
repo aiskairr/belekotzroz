@@ -53,6 +53,25 @@ tbody tr:hover { background: #f7fafb; }
 .login-card label { display: block; margin-top: 15px; }
 .login-card button { width: 100%; margin-top: 20px; }
 .login-card .status { min-height: 20px; color: #b43a3a; }
+body[data-mode="dark"] { background: #0f172a; color: #e5edf7; }
+body[data-mode="dark"] .page-header p,
+body[data-mode="dark"] .status,
+body[data-mode="dark"] label span,
+body[data-mode="dark"] .summary-grid span,
+body[data-mode="dark"] .empty-row td { color: #94a3b8; }
+body[data-mode="dark"] .summary-grid article,
+body[data-mode="dark"] .toolbar,
+body[data-mode="dark"] .table-card,
+body[data-mode="dark"] .login-card { background: #111827; color: #e5edf7; border-color: #233042; box-shadow: 0 14px 36px rgba(2,6,23,.34); }
+body[data-mode="dark"] .header-actions a,
+body[data-mode="dark"] button.secondary,
+body[data-mode="dark"] input,
+body[data-mode="dark"] select { background: #0f172a; color: #e5edf7; border-color: #334155; }
+body[data-mode="dark"] .table-title,
+body[data-mode="dark"] th,
+body[data-mode="dark"] td { border-color: #233042; }
+body[data-mode="dark"] th { background: #162033; }
+body[data-mode="dark"] tbody tr:hover { background: #162033; }
 
 @media (max-width: 900px) {
   .audit-app { width: min(100% - 24px, 1500px); padding-top: 20px; }

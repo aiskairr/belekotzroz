@@ -82,6 +82,40 @@ td select, td input { min-width: 120px; }
 .sale-products b { min-width: 66px; color: #667085; font-size: 11px; }
 .sale-products > div > span:not(:first-child), .sale-products > div > strong { text-align: right; white-space: nowrap; }
 .sale-products p, .sales-empty { margin: 0; color: #667085; padding: 28px; text-align: center; }
+html[data-mode="dark"],
+body[data-mode="dark"] { background: #0f172a; color: #e5edf7; }
+body[data-mode="dark"] .filters,
+body[data-mode="dark"] .summary-grid article,
+body[data-mode="dark"] .payroll-card,
+body[data-mode="dark"] .sales-modal-card,
+body[data-mode="dark"] .sale-document { background: #111827; color: #e5edf7; border-color: #233042; box-shadow: 0 14px 36px rgba(2,6,23,.34); }
+body[data-mode="dark"] .summary-grid .summary-primary { background: rgba(37,99,235,.16); border-color: #31507b; }
+body[data-mode="dark"] .summary-primary strong,
+body[data-mode="dark"] .total-result strong { color: #dbeafe; }
+body[data-mode="dark"] .page-heading > div > p:last-child,
+body[data-mode="dark"] .filters label,
+body[data-mode="dark"] .summary-grid span,
+body[data-mode="dark"] .card-title p,
+body[data-mode="dark"] .employee-cell small,
+body[data-mode="dark"] .sale-products p,
+body[data-mode="dark"] .sales-empty { color: #94a3b8; }
+body[data-mode="dark"] button.secondary,
+body[data-mode="dark"] .quick-periods button,
+body[data-mode="dark"] input,
+body[data-mode="dark"] select,
+body[data-mode="dark"] .readonly-payroll-field,
+body[data-mode="dark"] .readonly-input,
+body[data-mode="dark"] .sales-detail-button { background: #0f172a; color: #e5edf7; border-color: #334155; }
+body[data-mode="dark"] th,
+body[data-mode="dark"] .sale-document-head { background: #162033; }
+body[data-mode="dark"] td,
+body[data-mode="dark"] .table-wrap,
+body[data-mode="dark"] .sales-modal-card > header,
+body[data-mode="dark"] .sale-products > div { border-color: #233042; }
+body[data-mode="dark"] tbody tr:hover { background: #162033; }
+body[data-mode="dark"] tbody tr.dirty { background: #2a2112; }
+body[data-mode="dark"] .modal-close { background: #1f2937; color: #e5edf7; }
+body[data-mode="dark"] .heading-actions .expense-button { background: #198754 !important; color: #fff !important; border-color: #198754 !important; }
 
 @media (max-width: 900px) {
   .payroll-panel { width: calc(100% - 24px); margin-top: 18px; }

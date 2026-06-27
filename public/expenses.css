@@ -50,6 +50,54 @@ tr:hover td { background: #f8fafc; }
 .empty { color: #667085; text-align: center; padding: 35px; }
 .toast { position: fixed; right: 20px; bottom: 20px; z-index: 500; max-width: 420px; border-radius: 7px; background: #147a55; color: #fff; padding: 13px 17px; box-shadow: 0 18px 50px rgba(15,23,42,.22); font-weight: 750; }
 .toast.error { background: #b42318; }
+
+body[data-mode="dark"] { background: #0f172a; color: #e5edf7; }
+body[data-mode="dark"] .page-heading p,
+body[data-mode="dark"] .section-heading p,
+body[data-mode="dark"] label > span,
+body[data-mode="dark"] .category-hint,
+body[data-mode="dark"] .empty { color: #94a3b8; }
+body[data-mode="dark"] .editor-band,
+body[data-mode="dark"] .filters-band,
+body[data-mode="dark"] .expenses-table-section,
+body[data-mode="dark"] .summary-total,
+body[data-mode="dark"] .category-summary article {
+  background: #111827;
+  color: #e5edf7;
+  border-color: #233042;
+  box-shadow: 0 14px 36px rgba(2,6,23,.34);
+}
+body[data-mode="dark"] .summary-total {
+  background: linear-gradient(180deg, #172033 0%, #111827 100%);
+}
+body[data-mode="dark"] .summary-total span,
+body[data-mode="dark"] .summary-total small,
+body[data-mode="dark"] .category-summary span { color: #9fb0c7; }
+body[data-mode="dark"] input,
+body[data-mode="dark"] select,
+body[data-mode="dark"] .secondary,
+body[data-mode="dark"] .row-actions button {
+  background: #0f172a;
+  color: #e5edf7;
+  border-color: #334155;
+}
+body[data-mode="dark"] input::placeholder { color: #7f90a8; }
+body[data-mode="dark"] .category-hint { border-left-color: var(--ordo-accent, #2563eb); }
+body[data-mode="dark"] .table-wrap,
+body[data-mode="dark"] th,
+body[data-mode="dark"] td { border-color: #233042; }
+body[data-mode="dark"] th { background: #162033; }
+body[data-mode="dark"] td { color: #dbe7f5; }
+body[data-mode="dark"] tr:hover td { background: #162033; }
+body[data-mode="dark"] .category-badge { background: #1f2937; color: #dbe7f5; }
+body[data-mode="dark"] .category-fixed { background: #132a46; color: #9ec5ff; }
+body[data-mode="dark"] .category-variable { background: #352710; color: #f6d28b; }
+body[data-mode="dark"] .category-one_time { background: #291c45; color: #ccb7ff; }
+body[data-mode="dark"] .category-operational { background: #132c23; color: #9ce0c2; }
+body[data-mode="dark"] .category-marketing { background: #341c28; color: #f6b4cb; }
+body[data-mode="dark"] .category-taxes { background: #1f2937; color: #cbd5e1; }
+body[data-mode="dark"] .category-financial { background: #102a2e; color: #9fe0e8; }
+
 @media (max-width: 1200px) { .expense-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }.description-field { grid-column: span 2; }.category-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filters-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }.search-field { grid-column: span 2; } }
 @media (max-width: 760px) { .expenses-app { width: calc(100% - 24px); margin-top: 18px; }.page-heading { align-items: stretch; flex-direction: column; }.page-heading h1 { font-size: 31px; }.expense-form, .filters-form, .summary-grid { grid-template-columns: 1fr; }.description-field, .search-field { grid-column: auto; }.category-summary { grid-template-columns: 1fr 1fr; }.editor-band, .filters-band { padding: 16px; } }
 @media print {

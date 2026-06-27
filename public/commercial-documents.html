@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Счета юрлицам</title>
+    <link rel="stylesheet" href="/styles.css?v=20260626-dark-fix">
+    <link rel="stylesheet" href="/crm-shell.css?v=20260626-dark-fix">
+    <link rel="stylesheet" href="/commercial-documents.css?v=20260626-dark-fix">
+  </head>
+  <body>
+    <main class="commercial-page">
+      <section id="commercialPanel" class="commercial-panel hidden">
+        <header class="commercial-header">
+          <div class="commercial-hero-copy">
+            <p class="eyebrow">B2B документы</p>
+            <h1>Счет для ИП, ОсОО и юрлиц</h1>
+            <p>Выберите контрагента, добавьте товары из МойСклад и сразу сформируйте Word-счет в аккуратном виде.</p>
+            <div class="commercial-hero-points">
+              <span>Поиск контрагентов</span>
+              <span>Реквизиты покупателя</span>
+              <span>Товары из МойСклад</span>
+              <span>Word-счет</span>
+            </div>
+          </div>
+          <div class="commercial-badge">
+            <strong>МойСклад</strong>
+            <small>PDF и отгрузка</small>
+          </div>
+        </header>
+
+        <form id="commercialForm" class="commercial-form">
+          <section class="commercial-card commercial-card-accent wide">
+            <div class="card-head">
+              <div>
+                <p class="card-kicker">Шаг 1</p>
+                <h2>Документ</h2>
+              </div>
+              <span class="card-chip">PDF + отгрузка</span>
+            </div>
+            <div class="form-grid two">
+              <label>
+                <span>Основание / комментарий</span>
+                <input id="description" placeholder="Например: Оплата партии кондиционеров">
+              </label>
+              <label>
+                <span>Точка продаж / склад</span>
+                <select id="store"></select>
+              </label>
+            </div>
+            <p class="inline-note">Система одновременно создает отгрузку в МойСклад и скачивает PDF для клиента.</p>
+          </section>
+
+          <section class="commercial-card wide">
+            <div class="card-head">
+              <div>
+                <p class="card-kicker">Шаг 2</p>
+                <h2>Контрагент</h2>
+              </div>
+            </div>
+            <div class="mode-switch">
+              <label><input type="radio" name="customerMode" value="new" checked> Новый</label>
+              <label><input type="radio" name="customerMode" value="existing"> Существующий</label>
+            </div>
+            <div id="customerSearchWrap" class="hidden">
+              <label>
+                <span>Поиск контрагента</span>
+                <input id="customerSearch" placeholder="Название, телефон или ИНН">
+              </label>
+              <div id="customerSearchMeta" class="search-meta">Введите минимум 2 символа</div>
+              <div id="customerResults" class="search-results"></div>
+            </div>
+            <div class="subsection">
+              <div class="subsection-title">Основное</div>
+              <div class="form-grid two">
+                <label>
+                  <span>Название компании</span>
+                  <input id="customerName" placeholder="ООО / ИП / ОсОО" required>
+                </label>
+                <label>
+                  <span>ИНН / БИН</span>
+                  <input id="customerInn" placeholder="Идентификатор контрагента">
+                </label>
+                <label>
+                  <span>Телефон</span>
+                  <input id="customerPhone" placeholder="+996 ...">
+                </label>
+                <label>
+                  <span>Электронный адрес</span>
+                  <input id="customerEmail" type="email" placeholder="Необязательно">
+                </label>
+                <label class="wide-field">
+                  <span>Адрес</span>
+                  <input id="customerAddress" placeholder="Юридический или фактический адрес">
+                </label>
+              </div>
+            </div>
+            <div class="subsection">
+              <div class="subsection-title">Банковские реквизиты</div>
+              <div class="form-grid two">
+                <label>
+                  <span>Банк</span>
+                  <input id="customerBank" placeholder="Необязательно">
+                </label>
+                <label>
+                  <span>БИК</span>
+                  <input id="customerBik" placeholder="Необязательно">
+                </label>
+                <label>
+                  <span>Расчетный счет</span>
+                  <input id="customerSettlementAccount" placeholder="Необязательно">
+                </label>
+                <label>
+                  <span>Корр. счет</span>
+                  <input id="customerCorrAccount" placeholder="Необязательно">
+                </label>
+                <label>
+                  <span>ОКПО</span>
+                  <input id="customerOkpo" placeholder="Необязательно">
+                </label>
+              </div>
+            </div>
+            <fieldset class="group-picker">
+              <legend>Группы</legend>
+              <label><input type="checkbox" name="customerGroups" value="клиент"> клиент</label>
+              <label><input type="checkbox" name="customerGroups" value="маркетплейс"> маркетплейс</label>
+              <label><input type="checkbox" name="customerGroups" value="оптовые клиенты"> оптовые клиенты</label>
+              <label><input type="checkbox" name="customerGroups" value="поставщики"> поставщики</label>
+              <label><input type="checkbox" name="customerGroups" value="поставщики китай"> поставщики китай</label>
+            </fieldset>
+          </section>
+
+          <section class="commercial-card wide">
+            <div class="card-head">
+              <div>
+                <p class="card-kicker">Шаг 3</p>
+                <h2>Товары</h2>
+              </div>
+              <button id="addItemButton" class="secondary-button" type="button">Добавить товар +</button>
+            </div>
+            <div id="itemsList" class="items-list"></div>
+            <label class="product-search">
+              <span>Поиск товара</span>
+              <input id="productSearch" placeholder="Название, код, артикул или штрихкод" autocomplete="off">
+            </label>
+            <div id="productSearchMeta" class="search-meta">Выбери строку товара и начни вводить минимум 2 символа</div>
+            <div id="productResults" class="search-results"></div>
+          </section>
+
+          <div class="commercial-actions wide">
+            <button type="submit">Создать документ</button>
+            <p id="commercialStatus" class="status"></p>
+          </div>
+        </form>
+      </section>
+
+      <section id="commercialSuccessModal" class="modal hidden" aria-modal="true" role="dialog" aria-labelledby="commercialSuccessTitle">
+        <div class="modal-card commercial-success-card">
+          <h2 id="commercialSuccessTitle">Документ создан</h2>
+          <p id="commercialSuccessText">PDF сохранен, отгрузка создана.</p>
+          <div class="modal-actions commercial-success-actions">
+            <button id="commercialPrintButton" type="button">Распечатать счет на оплату</button>
+            <button id="commercialOpenDocumentButton" class="secondary-button" type="button">Перейти к документу</button>
+            <button id="commercialCloseModalButton" class="secondary-button" type="button">Закрыть</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="/commercial-documents.js?v=20260625-commercial-documents" type="module"></script>
+  </body>
+</html>

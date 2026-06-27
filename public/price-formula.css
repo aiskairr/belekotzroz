@@ -249,3 +249,83 @@ td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8), td:nth-child
   .formula-controls-wide { grid-template-columns: 1fr; }
   .fallback-row { grid-template-columns: 1fr; }
 }
+
+html[data-mode="dark"],
+body[data-mode="dark"] {
+  background: #0f172a;
+  color: #e5edf7;
+}
+
+body[data-mode="dark"] .page-header p:last-child,
+body[data-mode="dark"] .status,
+body[data-mode="dark"] label,
+body[data-mode="dark"] .formula-copy p:last-child,
+body[data-mode="dark"] .template-status,
+body[data-mode="dark"] .tier-title p:last-child,
+body[data-mode="dark"] .tier-head,
+body[data-mode="dark"] .summary-grid span,
+body[data-mode="dark"] .row-template-cell small,
+body[data-mode="dark"] .price-currency,
+body[data-mode="dark"] .muted,
+body[data-mode="dark"] td:nth-child(2) {
+  color: #94a3b8;
+}
+
+body[data-mode="dark"] .formula-card,
+body[data-mode="dark"] .toolbar,
+body[data-mode="dark"] .summary-grid article,
+body[data-mode="dark"] .table-card,
+body[data-mode="dark"] .template-card,
+body[data-mode="dark"] .tier-card {
+  background: #111827;
+  color: #e5edf7;
+  border-color: #233042;
+  box-shadow: 0 18px 45px rgba(2,6,23,.34);
+}
+
+body[data-mode="dark"] .template-status,
+body[data-mode="dark"] .tier-row {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+body[data-mode="dark"] input,
+body[data-mode="dark"] select,
+body[data-mode="dark"] button.secondary,
+body[data-mode="dark"] .back-link {
+  background: #0f172a;
+  color: #e5edf7;
+  border-color: #334155;
+}
+
+body[data-mode="dark"] input::placeholder {
+  color: #7f90a8;
+}
+
+body[data-mode="dark"] .table-wrap,
+body[data-mode="dark"] th,
+body[data-mode="dark"] td,
+body[data-mode="dark"] .fallback-row {
+  border-color: #233042;
+}
+
+body[data-mode="dark"] th {
+  background: #162033;
+}
+
+body[data-mode="dark"] tbody tr:hover {
+  background: #162033;
+}
+
+body[data-mode="dark"] tbody tr.changed {
+  background: #2a2112;
+}
+
+body[data-mode="dark"] tbody tr.skipped {
+  background: #32181d;
+}
+
+body[data-mode="dark"] .archive-badge {
+  background: #1f2937;
+  color: #cbd5e1;
+}
