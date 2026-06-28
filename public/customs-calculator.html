@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Калькулятор таможни</title>
-    <link rel="stylesheet" href="/customs-calculator.css?v=20260627-customs-expenses-label-fix">
+    <link rel="stylesheet" href="/customs-calculator.css?v=20260627-customs-global-party-v2">
     <link rel="stylesheet" href="/crm-shell.css?v=20260626-dark-fix">
   </head>
   <body>
@@ -29,24 +29,38 @@
           </label>
           <button id="reloadCatalogButton" class="secondary" type="button">Обновить каталог</button>
           <button id="addManualRowButton" type="button">Добавить товар</button>
+          <button id="saveHistoryButton" class="secondary" type="button">Сохранить в историю</button>
+          <button id="historyButton" class="secondary" type="button">История</button>
           <button id="clearRowsButton" class="secondary danger" type="button">Очистить всё</button>
+        </section>
+
+        <section id="historyPanel" class="customs-history-card hidden">
+          <div class="section-heading">
+            <div>
+              <h2>История расчетов</h2>
+              <p>Записи сохраняются в Supabase и не пропадут после очистки браузера.</p>
+            </div>
+          </div>
+          <div id="historyList" class="customs-history-list"></div>
         </section>
 
         <section class="summary-grid">
           <article><span>Товаров в расчёте</span><strong id="rowsCount">0</strong></article>
           <article><span>Общее кол-во шт.</span><strong id="unitsCount">0</strong></article>
           <article><span>Общий вес, кг</span><strong id="weightTotal">0</strong></article>
+          <article><span>Общий вес, т</span><strong id="tonsTotal">0</strong></article>
           <article><span>Общий объем, м³</span><strong id="volumeTotal">0</strong></article>
-          <article><span>Закупка</span><strong id="buyTotal">0,00 сом</strong></article>
-          <article><span>Доп. расходы партии</span><strong id="expensesTotal">0,00 сом</strong></article>
-          <article class="summary-primary"><span>Себестоимость партии</span><strong id="landedTotal">0,00 сом</strong></article>
+          <article><span>Закупка</span><strong id="buyTotal">0,00 USD</strong></article>
+          <article><span>Общая прибыль</span><strong id="profitTotal">0,00 USD</strong></article>
+          <article><span>Общие расходы партии</span><strong id="expensesTotal">0,00 USD</strong></article>
+          <article class="summary-primary"><span>Себестоимость партии</span><strong id="landedTotal">0,00 USD</strong></article>
         </section>
 
         <section class="customs-party-card">
           <div class="section-heading">
             <div>
               <h2>Общие расходы партии</h2>
-              <p>Эти суммы относятся ко всей поставке целиком и автоматически распределяются на товары по количеству штук.</p>
+              <p>Эти суммы относятся ко всему приходу целиком, а не к одной строке. Система собирает общий расход, переводит его в USD и распределяет по весу или объёму всей поставки.</p>
             </div>
           </div>
           <div class="customs-party-grid">
@@ -54,6 +68,46 @@
               <span>Растаможка от брокера за партию, сом</span>
               <input id="partyCustomsClearanceInput" type="number" min="0" step="0.01" value="0">
             </label>
+            <label>
+              <span>СВХ за партию, сом</span>
+              <input id="partyTemporaryStorageInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Таможенная декларация, сом</span>
+              <input id="partyDeclarationInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Оформление, сом</span>
+              <input id="partyProcessingInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Пломба, сом</span>
+              <input id="partySealInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Сопровождение, сом</span>
+              <input id="partyEscortInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Доставка Китай → КР, USD</span>
+              <input id="partyDeliveryUsdInput" type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
+              <span>Распределять по</span>
+              <select id="partyDistributionModeSelect">
+                <option value="weight">Весу</option>
+                <option value="volume">Объему</option>
+                <option value="greater" selected>Тому, что больше</option>
+              </select>
+            </label>
+          </div>
+          <div class="customs-party-stats">
+            <article><span>Общие расходы, сом</span><strong id="partyCommonKgsTotal">0,00 сом</strong></article>
+            <article><span>Общие расходы, USD</span><strong id="partyCommonUsdTotal">0,00 USD</strong></article>
+            <article><span>С доставкой, USD</span><strong id="partyCommonUsdWithDeliveryTotal">0,00 USD</strong></article>
+            <article><span>Коэффициент по вашей формуле</span><strong id="partyWeightFormulaRate">0,00 USD</strong></article>
+            <article><span>Ставка на 1 кг / 1 м³</span><strong id="partyRatePerBase">0,00 USD</strong></article>
+            <article><span>Если делить на тонны</span><strong id="partyRatePerTon">0,00 USD</strong></article>
           </div>
         </section>
 
@@ -71,13 +125,23 @@
           <div class="section-heading">
             <div>
               <h2>Товары в партии</h2>
-              <p>Каждая строка может быть отдельным товаром с ручным названием, артикулом и валютой закупки. Все расходы ниже вводятся за 1 штуку, а общая сумма партии считается автоматически по количеству.</p>
+              <p>Каждая строка это отдельный товар. В строке вы указываете закупку, вес, объём и количество, а общие таможенные расходы сверху автоматически распределяются на весь приход.</p>
             </div>
           </div>
           <div id="rowsList" class="customs-rows-list"></div>
         </section>
+
+        <section class="customs-summary-table-card">
+          <div class="section-heading">
+            <div>
+              <h2>Итог по товарам</h2>
+              <p>Короткая таблица по каждой позиции без лишних полей.</p>
+            </div>
+          </div>
+          <div id="productSummaryTable" class="customs-product-summary"></div>
+        </section>
       </section>
     </main>
-    <script src="/customs-calculator.js?v=20260627-customs-expenses-label-fix" type="module"></script>
+    <script src="/customs-calculator.js?v=20260627-customs-global-party-v2" type="module"></script>
   </body>
 </html>

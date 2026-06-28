@@ -150,6 +150,26 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/customs-calculator/history') {
+      const user = requireAccountingAuth(req);
+      sendJson(res, 200, { rows: await getCustomsCalculatorHistory(user) });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/customs-calculator/history') {
+      const user = requireAccountingAuth(req);
+      const row = await saveCustomsCalculatorHistory(user, await readJson(req));
+      sendJson(res, 201, { row });
+      return;
+    }
+
+    const customsHistoryMatch = url.pathname.match(/^\/api\/customs-calculator\/history\/([0-9a-f-]{36})$/i);
+    if (customsHistoryMatch && req.method === 'GET') {
+      const user = requireAccountingAuth(req);
+      sendJson(res, 200, { row: await getCustomsCalculatorHistoryItem(customsHistoryMatch[1], user) });
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/crm/login-users') {
       const users = await getCrmLoginUsers();
       sendJson(res, 200, { users });
@@ -4569,6 +4589,61 @@ async function updateCrmUiSettings(user, input) {
   } catch {
     return settings;
   }
+}
+
+async function getCustomsCalculatorHistory(user) {
+  if (!user?.id || String(user.id).startsWith('legacy:')) return [];
+  try {
+    return await supabaseGet('/rest/v1/customs_calculator_history', {
+      select: 'id,title,payload,created_at,updated_at',
+      user_id: `eq.${user.id}`,
+      order: 'updated_at.desc,created_at.desc',
+      limit: '30'
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function getCustomsCalculatorHistoryItem(id, user) {
+  if (!user?.id || String(user.id).startsWith('legacy:')) throw httpError(403, 'Для этого пользователя история недоступна.');
+  const rows = await supabaseGet('/rest/v1/customs_calculator_history', {
+    select: 'id,title,payload,created_at,updated_at',
+    id: `eq.${id}`,
+    user_id: `eq.${user.id}`,
+    limit: '1'
+  });
+  if (!rows[0]) throw httpError(404, 'Запись истории не найдена.');
+  return rows[0];
+}
+
+async function saveCustomsCalculatorHistory(user, input) {
+  if (!user?.id || String(user.id).startsWith('legacy:')) throw httpError(403, 'Для этого пользователя история недоступна.');
+  const payload = normalizeCustomsCalculatorHistoryInput(input, user);
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/customs_calculator_history?select=id,title,payload,created_at,updated_at`, {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload)
+  });
+  return rows[0];
+}
+
+function normalizeCustomsCalculatorHistoryInput(input, user) {
+  const title = String(input?.title || '').trim().slice(0, 160) || `Расчет ${new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Bishkek' }).format(new Date())}`;
+  const draft = input?.draft && typeof input.draft === 'object' ? input.draft : null;
+  if (!draft) throw httpError(400, 'Нет данных для сохранения.');
+  const rows = Array.isArray(draft.rows) ? draft.rows.slice(0, 500) : [];
+  const rowSeq = Number(draft.rowSeq || 1);
+  const partyExpenses = draft.partyExpenses && typeof draft.partyExpenses === 'object' ? draft.partyExpenses : {};
+  return {
+    user_id: user.id,
+    title,
+    payload: {
+      rows,
+      rowSeq,
+      partyExpenses
+    }
+  };
 }
 
 function normalizeCrmUiSettings(input) {
