@@ -22,6 +22,11 @@ const loyaltyAccrualPreview = document.querySelector('#loyaltyAccrualPreview');
 const loyaltyLimitPreview = document.querySelector('#loyaltyLimitPreview');
 const successModal = document.querySelector('#successModal');
 const successMessage = document.querySelector('#successMessage');
+const fiscalStatusCard = document.querySelector('#fiscalStatusCard');
+const fiscalStatusBadge = document.querySelector('#fiscalStatusBadge');
+const fiscalStatusTitle = document.querySelector('#fiscalStatusTitle');
+const fiscalStatusText = document.querySelector('#fiscalStatusText');
+const fiscalStatusChecklist = document.querySelector('#fiscalStatusChecklist');
 const printDocumentButton = document.querySelector('#printDocumentButton');
 const openMoyskladButton = document.querySelector('#openMoyskladButton');
 const closeSuccessModalButton = document.querySelector('#closeSuccessModalButton');
@@ -70,6 +75,36 @@ const defaultUiSettings = {
 };
 let uiSettings = loadUiSettings();
 
+function normalizeKyrgyzPhoneInput(rawValue) {
+  const value = String(rawValue || '');
+  const digits = value.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('996')) return `+${digits.slice(0, 12)}`;
+  if (digits.startsWith('0')) return `+996${digits.slice(1, 10)}`;
+  return `+996${digits.slice(0, 9)}`;
+}
+
+function bindAutoKyrgyzPhonePrefix(input) {
+  if (!input) return;
+  input.addEventListener('focus', () => {
+    if (!String(input.value || '').trim()) {
+      input.value = '+996';
+    }
+  });
+  input.addEventListener('input', () => {
+    const normalized = normalizeKyrgyzPhoneInput(input.value);
+    if (!normalized) return;
+    if (input.value !== normalized) {
+      input.value = normalized;
+    }
+  });
+  input.addEventListener('blur', () => {
+    if (String(input.value || '').trim() === '+996') {
+      input.value = '';
+    }
+  });
+}
+
 const fields = {
   productSearch: document.querySelector('#productSearch'),
   productResults: document.querySelector('#productResults'),
@@ -106,6 +141,8 @@ const fields = {
   deliveryAddress: document.querySelector('#deliveryAddress'),
   deliveryNotes: document.querySelector('#deliveryNotes')
 };
+
+bindAutoKyrgyzPhonePrefix(fields.customerPhone);
 
 const summary = {
   baseTotal: document.querySelector('#baseTotal'),
@@ -2342,6 +2379,58 @@ function showSuccessModal(data, message) {
   openMoyskladButton.disabled = !getMoySkladWebUrl(data.document);
   successModal.classList.remove('hidden');
   renderPrintReceipt(data);
+  renderFiscalStatus(data);
+}
+
+async function renderFiscalStatus(data) {
+  if (!fiscalStatusCard) return;
+  const isRetailSale = data?.document?.type === 'retaildemand' && data?.document?.id;
+  if (!isRetailSale) {
+    fiscalStatusCard.classList.add('hidden');
+    fiscalStatusCard.classList.remove('ready', 'warning');
+    if (fiscalStatusBadge) fiscalStatusBadge.textContent = 'NewCas';
+    fiscalStatusChecklist.innerHTML = '';
+    return;
+  }
+
+  fiscalStatusCard.classList.remove('hidden');
+  fiscalStatusCard.classList.remove('ready', 'warning');
+  if (fiscalStatusBadge) fiscalStatusBadge.textContent = 'Проверка';
+  fiscalStatusTitle.textContent = 'NewCas';
+  fiscalStatusText.textContent = 'Проверяю готовность к автофискализации...';
+  fiscalStatusChecklist.innerHTML = '';
+
+  try {
+    const response = await fetch(`/api/retail-fiscal-status?documentId=${encodeURIComponent(data.document.id)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Не удалось проверить фискальный статус.');
+
+    const checks = payload.checks || {};
+    const labels = [
+      ['retailDemand', 'Документ создан как розничная продажа'],
+      ['retailStore', 'Указана точка продаж'],
+      ['retailShift', 'Есть открытая смена'],
+      ['store', 'Привязан склад'],
+      ['amount', 'Сумма документа больше нуля'],
+      ['paymentSplit', 'Есть суммы оплаты cash / noCash']
+    ];
+
+    fiscalStatusCard.classList.add(payload.ready ? 'ready' : 'warning');
+    if (fiscalStatusBadge) fiscalStatusBadge.textContent = payload.ready ? 'Авто' : 'Внимание';
+    fiscalStatusTitle.textContent = payload.ready
+      ? 'NewCas: готов к автофискализации'
+      : 'NewCas: не хватает кассовых полей';
+    fiscalStatusText.textContent = payload.note || 'Проверка выполнена.';
+    fiscalStatusChecklist.innerHTML = labels.map(([key, label]) => `
+      <li class="${checks[key] ? 'ok' : 'fail'}">${escapeHtml(label)}</li>
+    `).join('');
+  } catch (error) {
+    fiscalStatusCard.classList.add('warning');
+    if (fiscalStatusBadge) fiscalStatusBadge.textContent = 'Ошибка';
+    fiscalStatusTitle.textContent = 'NewCas: статус не определен';
+    fiscalStatusText.textContent = error.message || 'Не удалось проверить фискальный статус.';
+    fiscalStatusChecklist.innerHTML = '<li class="fail">Проверка не выполнена</li>';
+  }
 }
 
 function getLoyaltyResultText(loyalty) {

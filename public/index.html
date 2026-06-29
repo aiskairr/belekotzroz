@@ -47,6 +47,7 @@
         <a id="debtSaleNavLink" href="/debt-sale.html" data-permission="debtSale">Продать в долг</a>
         <a href="/deliveries.html" data-permission="deliveries">Доставки</a>
         <a href="/report.html" data-permission="reports">Отчетность</a>
+        <a href="/bank-commissions.html" data-permission="bankCommissions">Банковские комиссии</a>
         <a href="/expenses.html" data-permission="expenses">Расходы</a>
         <a href="/payroll.html" data-permission="payroll">Зарплаты</a>
         <a href="/commercial-documents.html" data-permission="commercialDocuments">Счета юрлицам</a>
@@ -358,6 +359,12 @@
         <div class="success-icon">✓</div>
         <h2>Документ создан</h2>
         <p id="successMessage">Продажа создана в МойСклад.</p>
+        <div id="fiscalStatusCard" class="fiscal-status-card hidden">
+          <div id="fiscalStatusBadge" class="fiscal-status-badge">NewCas</div>
+          <strong id="fiscalStatusTitle">Проверка NewCas</strong>
+          <p id="fiscalStatusText">Проверяю кассовую готовность документа...</p>
+          <ul id="fiscalStatusChecklist" class="fiscal-status-checklist"></ul>
+        </div>
         <div class="modal-actions">
           <button id="printDocumentButton" type="button">Распечатать</button>
           <button id="openMoyskladButton" class="secondary-button" type="button">Открыть в МойСклад</button>

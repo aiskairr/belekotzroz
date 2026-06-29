@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Банковские комиссии</title>
+    <link rel="stylesheet" href="/bank-commissions.css?v=20260629-1">
+    <link rel="stylesheet" href="/crm-shell.css?v=20260629-bank-commissions">
+  </head>
+  <body>
+    <main class="bank-commissions-app">
+      <section id="bankCommissionsPanel" class="bank-commissions-panel hidden">
+        <header class="bc-header">
+          <div>
+            <p class="eyebrow">Эквайринг и удержания</p>
+            <h1>Банковские комиссии</h1>
+            <p class="bc-subtitle">Смотри, какой банк сколько удержал комиссии, сколько прошло оборота и что осталось после удержаний.</p>
+          </div>
+        </header>
+
+        <form id="filtersForm" class="bc-filters">
+          <div class="bc-period-box">
+            <div class="bc-period-tabs">
+              <button type="button" data-period="today">Сегодня</button>
+              <button type="button" data-period="yesterday">Вчера</button>
+              <button type="button" data-period="week">Неделя</button>
+              <button type="button" data-period="2weeks">2 недели</button>
+              <button type="button" data-period="month">Месяц</button>
+              <button type="button" data-period="year">Год</button>
+              <button type="button" data-period="all">Весь период</button>
+            </div>
+            <div class="bc-period-dates">
+              <label><span>Дата от</span><input id="dateFrom" type="date" required></label>
+              <label><span>Дата до</span><input id="dateTo" type="date" required></label>
+            </div>
+          </div>
+
+          <label>
+            <span>Банк</span>
+            <select id="bankFilter">
+              <option value="">Все банки</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Тип оплаты</span>
+            <select id="paymentTypeFilter">
+              <option value="">Все типы</option>
+            </select>
+          </label>
+
+          <div class="bc-actions">
+            <button type="submit">Показать</button>
+            <a id="exportExcel" class="secondary-action" href="#">Excel</a>
+            <a id="exportPdf" class="secondary-action" href="#">PDF</a>
+          </div>
+        </form>
+
+        <section class="bc-cards">
+          <article class="bc-card accent"><span>Общая сумма комиссий</span><strong id="totalCommission">0,00 сом</strong></article>
+          <article class="bc-card"><span>Оборот через банки</span><strong id="totalTurnover">0,00 сом</strong></article>
+          <article class="bc-card"><span>Чистая сумма</span><strong id="totalNetAmount">0,00 сом</strong></article>
+          <article class="bc-card"><span>Банк с самой большой комиссией</span><strong id="topBank">—</strong></article>
+          <article class="bc-card"><span>Количество платежей</span><strong id="paymentCount">0</strong></article>
+          <article class="bc-card"><span>Средний процент комиссии</span><strong id="averageRate">0,00%</strong></article>
+        </section>
+
+        <section class="bc-layout">
+          <article class="bc-panel">
+            <div class="bc-panel-head">
+              <div>
+                <h2>Комиссия по банкам</h2>
+                <p id="chartStatus" class="status">Загружаю данные...</p>
+              </div>
+            </div>
+            <div id="chart" class="bc-chart">
+              <div class="empty-state">Нет данных для графика.</div>
+            </div>
+            <div id="chartTooltip" class="bc-tooltip hidden"></div>
+          </article>
+
+          <article class="bc-panel">
+            <div class="bc-panel-head">
+              <div>
+                <h2>Детализация</h2>
+                <p id="detailsStatus" class="status">Выбери банк в таблице или на графике.</p>
+              </div>
+            </div>
+            <div id="detailsPanel" class="bc-details">
+              <div class="empty-state">Пока ничего не выбрано.</div>
+            </div>
+          </article>
+        </section>
+
+        <section class="bc-panel">
+          <div class="bc-panel-head">
+            <div>
+              <h2>Сводка по банкам</h2>
+              <p id="tableStatus" class="status">Сортировка по комиссии.</p>
+            </div>
+          </div>
+          <div class="bc-table-wrap">
+            <table class="bc-table">
+              <thead>
+                <tr>
+                  <th><button type="button" data-sort="paymentType">Банк</button></th>
+                  <th><button type="button" data-sort="turnover">Сумма продаж</button></th>
+                  <th><button type="button" data-sort="commission">Комиссия</button></th>
+                  <th><button type="button" data-sort="netAmount">Чистая сумма</button></th>
+                  <th><button type="button" data-sort="paymentCount">Кол-во платежей</button></th>
+                  <th><button type="button" data-sort="averageRate">Средний %</button></th>
+                  <th><button type="button" data-sort="shareOfTotalCommission">Доля от общей комиссии</button></th>
+                </tr>
+              </thead>
+              <tbody id="tableBody">
+                <tr><td colspan="7" class="empty-cell">Загружаю данные...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/bank-commissions.js?v=20260629-1"></script>
+  </body>
+</html>

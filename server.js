@@ -143,6 +143,12 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/crm/moysklad-monitor') {
+      requireCrmRole(req, ['admin']);
+      sendJson(res, 200, { stats: getMoySkladMonitorStats() });
+      return;
+    }
+
     if (req.method === 'PUT' && url.pathname === '/api/crm/ui-settings') {
       const user = requireAnyAuthenticatedUser(req);
       const settings = await updateCrmUiSettings(user, await readJson(req));
@@ -348,6 +354,17 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/retail-fiscal-status') {
+      requireCrmPermission(req, 'sales');
+      const documentId = url.searchParams.get('documentId') || '';
+      if (!documentId) {
+        throw httpError(400, 'Укажите documentId.');
+      }
+      const status = await getRetailFiscalStatus(documentId);
+      sendJson(res, 200, status);
+      return;
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/products') {
       requireAnyCrmPermission(req, ['sales', 'commercialDocuments']);
       const search = (url.searchParams.get('search') || '').trim();
@@ -480,6 +497,60 @@ const server = createServer(async (req, res) => {
         storeHref: url.searchParams.get('storeHref') || ''
       });
       sendJson(res, 200, sanitizeSalesReportForUser(report, user));
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/reports/bank-commissions') {
+      requireReportAuth(req);
+      const analytics = await getBankCommissionAnalytics({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || '',
+        retailStoreHref: url.searchParams.get('retailStoreHref') || '',
+        storeHref: url.searchParams.get('storeHref') || '',
+        bank: url.searchParams.get('bank') || '',
+        paymentType: url.searchParams.get('paymentType') || ''
+      });
+      sendJson(res, 200, analytics);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/reports/bank-commissions/export.xls') {
+      requireReportAuth(req);
+      const analytics = await getBankCommissionAnalytics({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || '',
+        retailStoreHref: url.searchParams.get('retailStoreHref') || '',
+        storeHref: url.searchParams.get('storeHref') || '',
+        bank: url.searchParams.get('bank') || '',
+        paymentType: url.searchParams.get('paymentType') || ''
+      });
+      const content = buildBankCommissionExcelBuffer(analytics);
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.ms-excel; charset=utf-8',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('bank-commissions.xls')}`,
+        'Cache-Control': 'no-store'
+      });
+      res.end(content);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/reports/bank-commissions/export.pdf') {
+      requireReportAuth(req);
+      const analytics = await getBankCommissionAnalytics({
+        dateFrom: url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('dateTo') || '',
+        retailStoreHref: url.searchParams.get('retailStoreHref') || '',
+        storeHref: url.searchParams.get('storeHref') || '',
+        bank: url.searchParams.get('bank') || '',
+        paymentType: url.searchParams.get('paymentType') || ''
+      });
+      const content = await renderHtmlToPdf(buildBankCommissionExportHtml(analytics));
+      res.writeHead(200, {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('bank-commissions.pdf')}`,
+        'Cache-Control': 'no-store'
+      });
+      res.end(content);
       return;
     }
 
@@ -2720,6 +2791,109 @@ async function getSalesReport(input) {
   return request;
 }
 
+async function getBankCommissionAnalytics(input) {
+  const report = await getSalesReport(input);
+  const paymentTypes = await getMoySkladPaymentTypes().catch(() => []);
+  const paymentTypeMap = new Map(paymentTypes.map((item) => [normalizePaymentAnalyticsKey(item.name), item]));
+  const bankFilter = normalizePaymentAnalyticsKey(input.bank);
+  const paymentTypeFilter = normalizePaymentAnalyticsKey(input.paymentType);
+
+  const allPayments = (report.rows || [])
+    .flatMap((row) => extractBankCommissionPayments(row, paymentTypeMap))
+    .filter((payment) => {
+      if (bankFilter && normalizePaymentAnalyticsKey(payment.bankName) !== bankFilter) return false;
+      if (paymentTypeFilter && normalizePaymentAnalyticsKey(payment.paymentType) !== paymentTypeFilter) return false;
+      return true;
+    })
+    .sort((left, right) => new Date(right.moment) - new Date(left.moment));
+
+  const totals = allPayments.reduce((sum, payment) => ({
+    turnover: roundMoney(sum.turnover + payment.amount),
+    commission: roundMoney(sum.commission + payment.commission),
+    net: roundMoney(sum.net + payment.netAmount),
+    count: sum.count + 1,
+    withoutCommission: sum.withoutCommission + (payment.withoutCommission ? 1 : 0)
+  }), { turnover: 0, commission: 0, net: 0, count: 0, withoutCommission: 0 });
+
+  const banks = new Map();
+  for (const payment of allPayments) {
+    const key = payment.paymentType;
+    const existing = banks.get(key) || {
+      bankName: payment.bankName,
+      paymentType: payment.paymentType,
+      turnover: 0,
+      commission: 0,
+      netAmount: 0,
+      paymentCount: 0,
+      averageRate: 0,
+      withoutCommissionCount: 0,
+      payments: []
+    };
+    existing.turnover = roundMoney(existing.turnover + payment.amount);
+    existing.commission = roundMoney(existing.commission + payment.commission);
+    existing.netAmount = roundMoney(existing.netAmount + payment.netAmount);
+    existing.paymentCount += 1;
+    existing.withoutCommissionCount += payment.withoutCommission ? 1 : 0;
+    existing.payments.push(payment);
+    banks.set(key, existing);
+  }
+
+  const rows = [...banks.values()]
+    .map((bank) => {
+      const averageRate = bank.turnover > 0 ? roundMoney(bank.commission / bank.turnover * 100) : 0;
+      const shareOfTotalCommission = totals.commission > 0 ? roundMoney(bank.commission / totals.commission * 100) : 0;
+      return {
+        bankName: bank.bankName,
+        paymentType: bank.paymentType,
+        turnover: bank.turnover,
+        commission: bank.commission,
+        netAmount: bank.netAmount,
+        paymentCount: bank.paymentCount,
+        averageRate,
+        shareOfTotalCommission,
+        withoutCommissionCount: bank.withoutCommissionCount,
+        payments: bank.payments
+      };
+    })
+    .sort((left, right) =>
+      right.commission - left.commission
+      || right.turnover - left.turnover
+      || right.paymentCount - left.paymentCount
+      || left.paymentType.localeCompare(right.paymentType, 'ru')
+    );
+
+  const topCommissionBank = rows[0] || null;
+  const averageRate = totals.turnover > 0 ? roundMoney(totals.commission / totals.turnover * 100) : 0;
+  const bankOptions = [...new Set(allPayments.map((payment) => payment.bankName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
+  const paymentTypeOptions = [...new Set(allPayments.map((payment) => payment.paymentType).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ru'));
+
+  return {
+    filters: {
+      dateFrom: input.dateFrom,
+      dateTo: input.dateTo,
+      bank: input.bank || '',
+      paymentType: input.paymentType || ''
+    },
+    totals: {
+      turnover: totals.turnover,
+      commission: totals.commission,
+      netAmount: totals.net,
+      paymentCount: totals.count,
+      averageRate,
+      withoutCommissionCount: totals.withoutCommission,
+      topCommissionBank: topCommissionBank ? {
+        bankName: topCommissionBank.bankName,
+        paymentType: topCommissionBank.paymentType,
+        commission: topCommissionBank.commission
+      } : null
+    },
+    bankOptions,
+    paymentTypeOptions,
+    rows,
+    payments: allPayments
+  };
+}
+
 async function loadSalesReport(input) {
   const token = requiredEnv('MOYSKLAD_TOKEN');
   const dateFrom = normalizeReportDate(input.dateFrom, 'from');
@@ -2760,6 +2934,109 @@ async function loadSalesReport(input) {
     rows,
     totals
   };
+}
+
+function extractBankCommissionPayments(row, paymentTypeMap) {
+  const parsedLines = parseBankPaymentLines(row.comment || '');
+  const bankLines = parsedLines.filter((line) => isBankCommissionPaymentName(line.name));
+  const effectiveEntries = bankLines.length
+    ? bankLines
+    : isBankCommissionPaymentName(row.paymentType)
+      ? [{ name: row.paymentType, amount: roundMoney(row.amount) }]
+      : [];
+
+  if (!effectiveEntries.length) return [];
+
+  const entries = effectiveEntries
+    .map((entry, index) => {
+      const typeMeta = paymentTypeMap.get(normalizePaymentAnalyticsKey(entry.name));
+      const rate = Number(typeMeta?.rate || 0);
+      const bankName = String(typeMeta?.provider || parsePaymentType(entry.name).provider || entry.name || '').trim();
+      const calculatedCommission = rate > 0 ? roundMoney(entry.amount * rate / 100) : 0;
+      return {
+        id: `${row.id}:${index}:${normalizePaymentAnalyticsKey(entry.name)}`,
+        saleId: row.id,
+        saleName: row.name,
+        moment: row.moment,
+        customerName: row.customerName || '',
+        paymentType: entry.name,
+        bankName: bankName || entry.name,
+        amount: roundMoney(entry.amount),
+        rate,
+        calculatedCommission,
+        commission: 0,
+        netAmount: 0,
+        withoutCommission: false,
+        storeName: row.storeName || '',
+        type: row.type,
+        webUrl: row.webUrl || ''
+      };
+    })
+    .filter((entry) => entry.amount > 0);
+
+  if (!entries.length) return [];
+
+  const knownCommissionTotal = roundMoney(Number(row.commission || 0));
+  const calculatedTotal = roundMoney(entries.reduce((sum, entry) => sum + entry.calculatedCommission, 0));
+  const amountTotal = roundMoney(entries.reduce((sum, entry) => sum + entry.amount, 0));
+
+  for (const entry of entries) {
+    if (knownCommissionTotal > 0) {
+      if (calculatedTotal > 0) {
+        entry.commission = roundMoney(knownCommissionTotal * (entry.calculatedCommission / calculatedTotal));
+      } else if (amountTotal > 0) {
+        entry.commission = roundMoney(knownCommissionTotal * (entry.amount / amountTotal));
+      }
+    } else {
+      entry.commission = entry.calculatedCommission;
+    }
+  }
+
+  if (entries.length > 1) {
+    const diff = roundMoney(knownCommissionTotal - entries.reduce((sum, entry) => sum + entry.commission, 0));
+    if (Math.abs(diff) > 0) {
+      entries[0].commission = roundMoney(entries[0].commission + diff);
+    }
+  }
+
+  for (const entry of entries) {
+    entry.withoutCommission = entry.commission <= 0;
+    entry.netAmount = roundMoney(entry.amount - entry.commission);
+  }
+
+  return entries;
+}
+
+function parseBankPaymentLines(description) {
+  return String(description || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^([^:]+):\s*(-?\d[\d\s.,]*)\s*сом/i);
+      if (!match) return null;
+      const amount = Number(String(match[2]).replace(/\s/g, '').replace(',', '.'));
+      if (!Number.isFinite(amount)) return null;
+      return {
+        name: match[1].replace(/\.+$/, '').trim(),
+        amount: roundMoney(amount)
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizePaymentAnalyticsKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function isBankCommissionPaymentName(name) {
+  const value = normalizePaymentAnalyticsKey(name);
+  if (!value) return false;
+  if (value.includes('налич')) return false;
+  if (value.includes('долг')) return false;
+  if (value.includes('не оплачено')) return false;
+  if (value.includes('бонус')) return false;
+  return /qr|банк|mbank|m\+|мбанк|мплюс|мбизнес|optima|оптима|bakai|бакай|o!|элькарт|visa|mastercard|терминал|расчетн|перевод|карт/i.test(value);
 }
 
 async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo, options = {}) {
@@ -3674,6 +3951,55 @@ async function getMoySkladRetailShifts(retailStoreHref) {
   }));
 }
 
+async function getRetailFiscalStatus(documentId) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/retaildemand/${encodeURIComponent(documentId)}?expand=retailStore,retailShift,store,agent`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'Не удалось проверить фискальный статус документа в МойСклад.', data);
+  }
+
+  const cashSum = fromMoySkladPrice(data.cashSum);
+  const noCashSum = fromMoySkladPrice(data.noCashSum);
+  const total = fromMoySkladPrice(data.sum);
+  const checks = {
+    retailDemand: data.meta?.type === 'retaildemand',
+    retailStore: Boolean(data.retailStore?.meta?.href),
+    retailShift: Boolean(data.retailShift?.meta?.href),
+    store: Boolean(data.store?.meta?.href),
+    amount: total > 0,
+    paymentSplit: cashSum > 0 || noCashSum > 0
+  };
+  const ready = Object.values(checks).every(Boolean);
+
+  return {
+    ready,
+    checks,
+    document: {
+      id: data.id,
+      name: data.name || '',
+      sum: total,
+      cashSum,
+      noCashSum,
+      retailStoreName: data.retailStore?.name || '',
+      retailShiftName: data.retailShift?.name || '',
+      storeName: data.store?.name || '',
+      customerName: data.agent?.name || '',
+      moment: data.moment || '',
+      webUrl: getMoySkladWebUrl('retaildemand', data.id)
+    },
+    note: ready
+      ? 'Документ выглядит готовым для облачной фискализации через кассовую схему МойСклад/NewCas.'
+      : 'Документ создан, но не все кассовые поля заполнены для уверенной фискализации.'
+  };
+}
+
 async function getStoreHrefForRetailStore(token, retailStoreHref) {
   const response = await moySkladFetch(retailStoreHref, {
     headers: {
@@ -3939,12 +4265,70 @@ function buildTelegramReceiptCaption(calculation, input, document) {
   ].join('\n').slice(0, 1024);
 }
 
+const MOYSKLAD_RATE_LIMIT_PER_MINUTE = 120;
+const MOYSKLAD_RATE_WINDOW_MS = 60 * 1000;
+const MOYSKLAD_MIN_REQUEST_GAP_MS = 500;
+let moySkladRequestTimeline = [];
+let moySkladNextAllowedAt = 0;
+let moySkladRateQueue = Promise.resolve();
+let moySkladWaitingRequests = 0;
+let moySkladActiveRequests = 0;
+
+async function acquireMoySkladRequestSlot() {
+  moySkladWaitingRequests += 1;
+  const previous = moySkladRateQueue;
+  let releaseQueue;
+  moySkladRateQueue = new Promise((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previous;
+  try {
+    while (true) {
+      const now = Date.now();
+      moySkladRequestTimeline = moySkladRequestTimeline.filter((timestamp) => now - timestamp < MOYSKLAD_RATE_WINDOW_MS);
+
+      const waitForGap = Math.max(0, moySkladNextAllowedAt - now);
+      const waitForWindow = moySkladRequestTimeline.length >= MOYSKLAD_RATE_LIMIT_PER_MINUTE
+        ? Math.max(0, moySkladRequestTimeline[0] + MOYSKLAD_RATE_WINDOW_MS - now)
+        : 0;
+      const waitTime = Math.max(waitForGap, waitForWindow);
+
+      if (waitTime <= 0) {
+        const startedAt = Date.now();
+        moySkladRequestTimeline.push(startedAt);
+        moySkladNextAllowedAt = startedAt + MOYSKLAD_MIN_REQUEST_GAP_MS;
+        moySkladWaitingRequests = Math.max(0, moySkladWaitingRequests - 1);
+        return;
+      }
+
+      await sleep(waitTime);
+    }
+  } finally {
+    releaseQueue();
+  }
+}
+
+function getMoySkladMonitorStats() {
+  const now = Date.now();
+  moySkladRequestTimeline = moySkladRequestTimeline.filter((timestamp) => now - timestamp < MOYSKLAD_RATE_WINDOW_MS);
+  return {
+    limitPerMinute: MOYSKLAD_RATE_LIMIT_PER_MINUTE,
+    requestsLastMinute: moySkladRequestTimeline.length,
+    waiting: moySkladWaitingRequests,
+    active: moySkladActiveRequests,
+    nextDelayMs: Math.max(0, moySkladNextAllowedAt - now)
+  };
+}
+
 async function moySkladFetch(url, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const retryable = method === 'GET' || method === 'HEAD';
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    await acquireMoySkladRequestSlot();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), MOYSKLAD_TIMEOUT_MS);
+    moySkladActiveRequests += 1;
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       if (response.status !== 429 || !retryable || attempt === 2) return response;
@@ -3966,6 +4350,7 @@ async function moySkladFetch(url, options = {}) {
       }
       await sleep(300 * (attempt + 1));
     } finally {
+      moySkladActiveRequests = Math.max(0, moySkladActiveRequests - 1);
       clearTimeout(timeout);
     }
   }
@@ -4189,6 +4574,19 @@ function formatMoney(value) {
   }).format(value);
 }
 
+function formatNumber(value) {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 0
+  }).format(Number(value || 0));
+}
+
+function formatPercent(value) {
+  return `${new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value || 0))}%`;
+}
+
 function getCounterpartyDescriptionField(description, label) {
   const text = String(description || '');
   const match = text.match(new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*(.+)`, 'i'));
@@ -4278,7 +4676,7 @@ function pluralRu(number, forms) {
 }
 
 function requiredEnv(name) {
-  const value = process.env[name];
+  const value = typeof process.env[name] === 'string' ? process.env[name].trim() : process.env[name];
   if (!value || value.includes('00000000-0000-0000-0000-000000000000')) {
     throw httpError(500, `Заполните ${name} в .env.`);
   }
@@ -4342,6 +4740,79 @@ function sanitizeSalesReportForUser(report, user) {
   return { ...report, totals, rows, canViewProfit: false };
 }
 
+function buildBankCommissionExcelBuffer(analytics) {
+  return Buffer.from(`\ufeff${buildBankCommissionExportHtml(analytics)}`, 'utf8');
+}
+
+function buildBankCommissionExportHtml(analytics) {
+  const rows = Array.isArray(analytics?.rows) ? analytics.rows : [];
+  const totals = analytics?.totals || {};
+  const period = `${escapeWordHtml(formatDateOnlyRu(analytics?.filters?.dateFrom || ''))} - ${escapeWordHtml(formatDateOnlyRu(analytics?.filters?.dateTo || ''))}`;
+  return `<!doctype html>
+  <html lang="ru">
+    <head>
+      <meta charset="utf-8">
+      <title>Банковские комиссии</title>
+      <style>
+        body { font-family: Inter, Arial, sans-serif; color: #172033; padding: 24px; }
+        h1, h2, p { margin: 0; }
+        .meta { margin: 8px 0 20px; color: #526075; }
+        .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+        .card { border: 1px solid #d8dee8; border-radius: 10px; padding: 14px; }
+        .card span { display: block; color: #667085; font-size: 12px; margin-bottom: 6px; }
+        .card strong { font-size: 24px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { border: 1px solid #d8dee8; padding: 8px 10px; text-align: left; font-size: 12px; }
+        th { background: #edf2f7; }
+        .num { text-align: right; white-space: nowrap; }
+      </style>
+    </head>
+    <body>
+      <h1>Банковские комиссии</h1>
+      <p class="meta">Период: ${period}</p>
+      <section class="cards">
+        <div class="card"><span>Общая комиссия</span><strong>${escapeWordHtml(formatMoney(totals.commission || 0))} сом</strong></div>
+        <div class="card"><span>Оборот через банки</span><strong>${escapeWordHtml(formatMoney(totals.turnover || 0))} сом</strong></div>
+        <div class="card"><span>Чистая сумма</span><strong>${escapeWordHtml(formatMoney(totals.netAmount || 0))} сом</strong></div>
+      </section>
+      <h2>Сводка по банкам</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Банк / тип оплаты</th>
+            <th>Сумма продаж</th>
+            <th>Комиссия</th>
+            <th>Чистая сумма</th>
+            <th>Кол-во платежей</th>
+            <th>Средний %</th>
+            <th>Доля от общей комиссии</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? rows.map((row) => `
+            <tr>
+              <td>${escapeWordHtml(row.paymentType)}</td>
+              <td class="num">${escapeWordHtml(formatMoney(row.turnover))}</td>
+              <td class="num">${escapeWordHtml(formatMoney(row.commission))}</td>
+              <td class="num">${escapeWordHtml(formatMoney(row.netAmount))}</td>
+              <td class="num">${escapeWordHtml(formatNumber(row.paymentCount))}</td>
+              <td class="num">${escapeWordHtml(formatPercent(row.averageRate))}</td>
+              <td class="num">${escapeWordHtml(formatPercent(row.shareOfTotalCommission))}</td>
+            </tr>
+          `).join('') : '<tr><td colspan="7">Нет данных за выбранный период.</td></tr>'}
+        </tbody>
+      </table>
+    </body>
+  </html>`;
+}
+
+function formatDateOnlyRu(value) {
+  if (!value) return '';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+}
+
 function requireAccountingAuth(req) {
   const user = getCrmUser(req);
   if (user && (hasCrmPermission(user, 'priceFormula') || hasCrmPermission(user, 'customsCalculator'))) return user;
@@ -4383,14 +4854,14 @@ function setReportSession(res, login) {
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
 }
 
-const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'priceFormula', 'customsCalculator', 'audit', 'users', 'about'];
+const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'priceFormula', 'customsCalculator', 'bankCommissions', 'audit', 'users', 'about'];
 const crmRolePermissions = {
   admin: [...crmPermissionNames],
   owner: [...crmPermissionNames],
-  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'customsCalculator', 'about'],
+  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'customsCalculator', 'bankCommissions', 'about'],
   seller: ['sales', 'debtSale', 'deliveries', 'reports', 'commercialDocuments', 'about'],
   logistics: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about'],
-  accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'customsCalculator', 'about'],
+  accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'customsCalculator', 'bankCommissions', 'about'],
   employee: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about']
 };
 

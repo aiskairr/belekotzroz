@@ -13,6 +13,7 @@ const navigation = [
   { id: 'debtSale', href: '/debt-sale.html', label: 'Продать в долг', permission: 'debtSale' },
   { id: 'deliveries', href: '/deliveries.html', label: 'Доставки', permission: 'deliveries' },
   { id: 'reports', href: '/report.html', label: 'Отчетность', permission: 'reports' },
+  { id: 'bankCommissions', href: '/bank-commissions.html', label: 'Банковские комиссии', permission: 'bankCommissions' },
   { id: 'expenses', href: '/expenses.html', label: 'Расходы', permission: 'expenses' },
   { id: 'payroll', href: '/payroll.html', label: 'Зарплаты', permission: 'payroll' },
   { id: 'commercialDocuments', href: '/commercial-documents.html', label: 'Счета юрлицам', permission: 'commercialDocuments' },
@@ -47,6 +48,7 @@ export async function initCrmShell({ page, allowedRoles }) {
   await loadSharedUiSettings();
   applySharedUiSettings();
   renderShell(user, page);
+  initMoySkladMonitor(user);
   return user;
 }
 
@@ -80,6 +82,12 @@ function renderShell(user, page) {
       <div><strong>${escapeHtml(navigation.find((item) => item.id === page)?.label || 'Ordo CRM')}</strong><small>Ordo CRM</small></div>
       <span>${escapeHtml(user.name)}</span>
     </header>
+    <aside id="moyskladMonitor" class="moysklad-monitor hidden" aria-live="polite">
+      <strong>МойСклад</strong>
+      <span id="moyskladMonitorRpm">0 / 120 в мин</span>
+      <span id="moyskladMonitorQueue">Очередь: 0</span>
+      <span id="moyskladMonitorActive">Активно: 0</span>
+    </aside>
     ${renderSettingsModal()}
   `);
 
@@ -172,6 +180,35 @@ function renderShell(user, page) {
     persistSharedUiSettings(defaults);
   });
   document.querySelector('#sharedSaveSettings').addEventListener('click', closeSharedSettings);
+}
+
+function shouldShowMoySkladMonitor(user) {
+  return user?.role === 'admin';
+}
+
+function initMoySkladMonitor(user) {
+  const widget = document.querySelector('#moyskladMonitor');
+  if (!widget || !shouldShowMoySkladMonitor(user)) return;
+  widget.classList.remove('hidden');
+
+  const rpm = document.querySelector('#moyskladMonitorRpm');
+  const queue = document.querySelector('#moyskladMonitorQueue');
+  const active = document.querySelector('#moyskladMonitorActive');
+
+  const loadStats = async () => {
+    try {
+      const response = await fetch('/api/crm/moysklad-monitor');
+      const data = await response.json().catch(() => ({ stats: null }));
+      if (!response.ok || !data?.stats) return;
+      rpm.textContent = `${data.stats.requestsLastMinute} / ${data.stats.limitPerMinute} в мин`;
+      queue.textContent = `Очередь: ${data.stats.waiting}${data.stats.nextDelayMs ? ` · ${Math.ceil(data.stats.nextDelayMs / 100) / 10}с` : ''}`;
+      active.textContent = `Активно: ${data.stats.active}`;
+      widget.classList.toggle('warning', data.stats.requestsLastMinute >= 100 || data.stats.waiting > 0);
+    } catch {}
+  };
+
+  loadStats();
+  window.setInterval(loadStats, 3000);
 }
 
 function renderSettingsModal() {

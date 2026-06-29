@@ -46,12 +46,43 @@ let latestPdfBlob = null;
 let latestPdfFileName = 'schet-na-oplatu.pdf';
 let latestDocumentUrl = '';
 
+function normalizeKyrgyzPhoneInput(rawValue) {
+  const value = String(rawValue || '');
+  const digits = value.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('996')) return `+${digits.slice(0, 12)}`;
+  if (digits.startsWith('0')) return `+996${digits.slice(1, 10)}`;
+  return `+996${digits.slice(0, 9)}`;
+}
+
+function bindAutoKyrgyzPhonePrefix(input) {
+  if (!input) return;
+  input.addEventListener('focus', () => {
+    if (!String(input.value || '').trim()) {
+      input.value = '+996';
+    }
+  });
+  input.addEventListener('input', () => {
+    const normalized = normalizeKyrgyzPhoneInput(input.value);
+    if (!normalized) return;
+    if (input.value !== normalized) {
+      input.value = normalized;
+    }
+  });
+  input.addEventListener('blur', () => {
+    if (String(input.value || '').trim() === '+996') {
+      input.value = '';
+    }
+  });
+}
+
 init();
 
 async function init() {
   user = await initCrmShell({ page: 'commercialDocuments', allowedRoles: ['admin', 'owner', 'manager', 'seller'] });
   if (!user) return;
   els.panel.classList.remove('hidden');
+  bindAutoKyrgyzPhonePrefix(els.customerPhone);
   bindEvents();
   await loadStores();
   renderItems();
