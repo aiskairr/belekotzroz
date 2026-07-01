@@ -300,10 +300,11 @@ function renderRows() {
             <span>Название товара</span>
             <input data-field="name" type="text" value="${escapeAttr(row.name || '')}" placeholder="Например: пылесос Ordo">
           </label>
+          ${row.boxVariant === 'master' ? '' : `
           <label>
             <span>Кол-во шт. в партии</span>
             <input data-field="quantity" type="number" min="1" step="1" value="${numberValue(calculation.quantity, 1)}">
-          </label>
+          </label>`}
           <label>
             <span>Тип коробки</span>
             <select data-field="boxVariant">
@@ -354,10 +355,6 @@ function renderRows() {
             <span>Прибыль за 1 шт, USD</span>
             <input data-field="profitPerUnitUsd" type="number" min="0" step="0.01" value="${numberValue(row.profitPerUnitUsd)}">
           </label>
-          <label>
-            <span>Прочие расходы за 1 шт, USD</span>
-            <input data-field="otherPerUnitUsd" type="number" min="0" step="0.01" value="${numberValue(row.otherPerUnitUsd)}">
-          </label>
           <label class="wide">
             <span>Комплектация</span>
             <input data-field="specification" type="text" value="${escapeAttr(row.specification || '')}" placeholder="Описание комплектации">
@@ -375,7 +372,6 @@ function renderRows() {
         <div class="customs-metric"><span>Нагрузка на 1 шт</span><strong>${formatUsd(calculation.sharedPerUnitUsd)}</strong></div>
         <div class="customs-metric"><span>Прибыль по строке</span><strong>${formatUsd(calculation.profitTotalUsd)}</strong></div>
         <div class="customs-metric"><span>Налог ${calculation.taxRateLabel}</span><strong>${formatUsd(calculation.taxTotalUsd)}</strong></div>
-        <div class="customs-metric"><span>Доп. на строку</span><strong>${formatUsd(calculation.otherTotalUsd)}</strong></div>
         <div class="customs-metric"><span>Себестоимость 1 шт</span><strong>${formatUsd(calculation.landedPerUnitUsd)}</strong></div>
         <div class="customs-metric"><span>Итог 1 шт с налогом</span><strong>${formatUsd(calculation.finalPerUnitUsd)}</strong></div>
         <div class="customs-metric"><span>Итог партии с налогом</span><strong>${formatUsd(calculation.finalTotalUsd)}</strong></div>
@@ -546,7 +542,7 @@ function calculateRow(row, context = buildPartyContext()) {
 
   const sharedCostTotalUsd = roundMoney(distributionBaseTotal * context.sharedRateUsd);
   const sharedPerUnitUsd = quantity > 0 ? roundMoney(sharedCostTotalUsd / quantity) : 0;
-  const otherPerUnitUsd = roundMoney(Number(row.otherPerUnitUsd || 0));
+  const otherPerUnitUsd = 0;
   const otherTotalUsd = roundMoney(otherPerUnitUsd * quantity);
   const profitPerUnitUsd = roundMoney(Number(row.profitPerUnitUsd || 0));
   const profitTotalUsd = roundMoney(profitPerUnitUsd * quantity);
@@ -590,10 +586,13 @@ function calculateRow(row, context = buildPartyContext()) {
 }
 
 function getRowQuantity(row) {
-  const byBoxes = Number(row.boxesCount || 0) > 0 && Number(row.unitsPerBox || 0) > 0
-    ? Number(row.boxesCount || 0) * Number(row.unitsPerBox || 0)
-    : Number(row.quantity || 0);
-  return Math.max(1, Number(byBoxes || 1));
+  if (row.boxVariant === 'master') {
+    const byBoxes = Number(row.boxesCount || 0) > 0 && Number(row.unitsPerBox || 0) > 0
+      ? Number(row.boxesCount || 0) * Number(row.unitsPerBox || 0)
+      : 1;
+    return Math.max(1, Number(byBoxes || 1));
+  }
+  return Math.max(1, Number(row.quantity || 1));
 }
 
 function getRowTotalWeightKg(row, quantity = getRowQuantity(row)) {
