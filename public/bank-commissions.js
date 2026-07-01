@@ -204,11 +204,17 @@ function renderChart() {
   const maxCommission = Math.max(...rows.map((row) => Number(row.commission || 0)), 1);
   els.chart.innerHTML = rows.map((row) => {
     const height = Math.max(6, Math.round((row.commission / maxCommission) * 100));
+    const share = Number(row.shareOfTotalCommission || 0);
     return `
       <button type="button" class="bc-bar ${row.paymentType === state.selectedPaymentType ? 'active' : ''}" data-payment-type="${escapeHtml(row.paymentType)}">
-        <div class="bc-bar-rail"><div class="bc-bar-fill" style="height:${height}%"></div></div>
-        <div class="bc-bar-label">${escapeHtml(row.paymentType)}</div>
-        <div class="bc-bar-value">${escapeHtml(formatMoney(row.commission))} сом</div>
+        <div class="bc-bar-rail">
+          <div class="bc-bar-fill" style="height:${height}%"></div>
+        </div>
+        <div class="bc-bar-meta">
+          <div class="bc-bar-label">${escapeHtml(row.paymentType)}</div>
+          <div class="bc-bar-value">${escapeHtml(formatMoney(row.commission))} сом</div>
+          <div class="bc-bar-share">${escapeHtml(formatPercent(share))} от всех комиссий</div>
+        </div>
       </button>
     `;
   }).join('');
@@ -264,28 +270,40 @@ function renderDetails() {
   const payments = Array.isArray(row.payments) ? row.payments : [];
   els.detailsPanel.innerHTML = `
     <section class="bc-detail-header">
-      <div>
-        <h3>${escapeHtml(row.paymentType)}</h3>
-        <p>${escapeHtml(row.bankName || row.paymentType)}</p>
+      <div class="bc-detail-bank">
+        <div class="bc-detail-badge">Банк</div>
+        <div>
+          <h3>${escapeHtml(row.paymentType)}</h3>
+          <p>${escapeHtml(row.bankName || row.paymentType)}</p>
+        </div>
       </div>
       <div class="bc-detail-stats">
         <div><span>Комиссия</span><strong>${escapeHtml(formatMoney(row.commission))} сом</strong></div>
         <div><span>Оборот</span><strong>${escapeHtml(formatMoney(row.turnover))} сом</strong></div>
         <div><span>Чистая сумма</span><strong>${escapeHtml(formatMoney(row.netAmount))} сом</strong></div>
+        <div><span>Платежей</span><strong>${escapeHtml(formatNumber(row.paymentCount))}</strong></div>
+        <div><span>Средний %</span><strong>${escapeHtml(formatPercent(row.averageRate))}</strong></div>
+        <div><span>Доля комиссии</span><strong>${escapeHtml(formatPercent(row.shareOfTotalCommission))}</strong></div>
       </div>
     </section>
     ${payments.length ? payments.map((payment) => `
       <article class="bc-payment-item">
-        <div>
-          <span>Продажа / заказ</span>
-          <strong>${escapeHtml(payment.saleName || payment.saleId || 'Документ')}</strong>
-          <p>${escapeHtml(payment.customerName || 'Клиент не указан')}</p>
-          <p>${escapeHtml(formatDateTime(payment.moment))}</p>
+        <div class="bc-payment-main">
+          <div>
+            <span>Продажа / заказ</span>
+            <strong>${escapeHtml(payment.saleName || payment.saleId || 'Документ')}</strong>
+          </div>
+          <div class="bc-payment-meta">
+            <p>${escapeHtml(payment.customerName || 'Клиент не указан')}</p>
+            <p>${escapeHtml(formatDateTime(payment.moment))}</p>
+          </div>
         </div>
-        <div><span>Сумма</span><strong>${escapeHtml(formatMoney(payment.amount))} сом</strong></div>
-        <div><span>% комиссии</span><strong>${escapeHtml(formatPercent(payment.rate || 0))}</strong></div>
-        <div><span>Комиссия</span><strong>${escapeHtml(formatMoney(payment.commission))} сом</strong></div>
-        <div><span>Чистая сумма</span><strong>${escapeHtml(formatMoney(payment.netAmount))} сом</strong></div>
+        <div class="bc-payment-metrics">
+          <div><span>Сумма</span><strong>${escapeHtml(formatMoney(payment.amount))} сом</strong></div>
+          <div><span>% комиссии</span><strong>${escapeHtml(formatPercent(payment.rate || 0))}</strong></div>
+          <div><span>Комиссия</span><strong>${escapeHtml(formatMoney(payment.commission))} сом</strong></div>
+          <div><span>Чистая сумма</span><strong>${escapeHtml(formatMoney(payment.netAmount))} сом</strong></div>
+        </div>
       </article>
     `).join('') : '<div class="empty-state">Нет платежей по этому банку.</div>'}
   `;

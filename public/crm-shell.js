@@ -67,7 +67,7 @@ function renderShell(user, page) {
   document.body.insertAdjacentHTML('afterbegin', `
     <aside class="shared-crm-sidebar">
       <button id="sharedCrmClose" class="shared-crm-close" type="button" aria-label="Закрыть меню">×</button>
-      <a class="shared-crm-brand" href="/sales.html"><span>O</span><div><strong>Ordo CRM</strong><small>МойСклад</small></div></a>
+      <a class="shared-crm-brand" href="/sales.html"><img src="/ordo-logo-light.svg" alt="Ordo CRM"></a>
       <nav>${links}</nav>
       <div class="shared-crm-sidebar-foot">
         <button id="sharedCrmSettings" class="shared-crm-settings" type="button">Настройки</button>
@@ -183,12 +183,15 @@ function renderShell(user, page) {
 }
 
 function shouldShowMoySkladMonitor(user) {
-  return user?.role === 'admin';
+  return user?.role === 'admin' || user?.role === 'owner';
 }
 
 function initMoySkladMonitor(user) {
   const widget = document.querySelector('#moyskladMonitor');
-  if (!widget || !shouldShowMoySkladMonitor(user)) return;
+  if (!widget || !shouldShowMoySkladMonitor(user)) {
+    widget?.classList.add('hidden');
+    return;
+  }
   widget.classList.remove('hidden');
 
   const rpm = document.querySelector('#moyskladMonitorRpm');
@@ -199,12 +202,18 @@ function initMoySkladMonitor(user) {
     try {
       const response = await fetch('/api/crm/moysklad-monitor');
       const data = await response.json().catch(() => ({ stats: null }));
-      if (!response.ok || !data?.stats) return;
+      if (!response.ok || !data?.stats) {
+        widget.classList.add('hidden');
+        return;
+      }
+      widget.classList.remove('hidden');
       rpm.textContent = `${data.stats.requestsLastMinute} / ${data.stats.limitPerMinute} в мин`;
       queue.textContent = `Очередь: ${data.stats.waiting}${data.stats.nextDelayMs ? ` · ${Math.ceil(data.stats.nextDelayMs / 100) / 10}с` : ''}`;
       active.textContent = `Активно: ${data.stats.active}`;
       widget.classList.toggle('warning', data.stats.requestsLastMinute >= 100 || data.stats.waiting > 0);
-    } catch {}
+    } catch {
+      widget.classList.add('hidden');
+    }
   };
 
   loadStats();

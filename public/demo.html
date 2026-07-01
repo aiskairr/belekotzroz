@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ordo CRM Demo</title>
+    <link rel="stylesheet" href="/demo.css">
+  </head>
+  <body>
+    <main class="demo-app">
+      <aside class="demo-sidebar">
+        <a class="demo-brand" href="/about.html">
+          <img src="/ordo-logo-light.svg" alt="Ordo CRM">
+          <div><strong>Ordo CRM</strong><small>Демо-режим</small></div>
+        </a>
+        <nav class="demo-nav">
+          <button class="active" type="button" data-screen="sales">Продажи</button>
+          <button type="button" data-screen="documents">Счета юрлицам</button>
+          <button type="button" data-screen="commissions">Банковские комиссии</button>
+          <button type="button" data-screen="control">Контроль</button>
+        </nav>
+        <div class="demo-sidebar-foot">
+          <div class="demo-chip safe">Без доступа к реальным данным</div>
+          <a class="demo-link" href="/about.html">Назад на сайт</a>
+        </div>
+      </aside>
+
+      <section class="demo-content">
+        <header class="demo-topbar">
+          <div>
+            <p class="eyebrow">Показ для клиентов</p>
+            <h1>Демо Ordo CRM</h1>
+            <p>Витрина системы с фейковыми данными. Можно показывать без риска для боевой CRM.</p>
+          </div>
+          <div class="demo-actions">
+            <span class="demo-chip">МойСклад Demo</span>
+            <span class="demo-chip">2 филиала</span>
+            <span class="demo-chip">NewCas Ready</span>
+          </div>
+        </header>
+
+        <section class="demo-cards">
+          <article><span>Продажи за день</span><strong>482 600 сом</strong><small>24 документа</small></article>
+          <article><span>Оплата сразу</span><strong>191 400 сом</strong><small>Наличные + QR + карта</small></article>
+          <article><span>В рассрочку</span><strong>291 200 сом</strong><small>M+, Банк Азии, О!</small></article>
+          <article class="accent"><span>Чистая прибыль</span><strong>96 300 сом</strong><small>Демо-показатели</small></article>
+        </section>
+
+        <section class="demo-screen active" data-screen-panel="sales">
+          <div class="demo-grid sales-grid">
+            <article class="demo-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Рабочее место продавца</p>
+                  <h2>Новая продажа</h2>
+                </div>
+                <span class="demo-chip soft">Аю-Гранд</span>
+              </div>
+
+              <div class="sale-stage">
+                <div class="stage-card">
+                  <span>Товар</span>
+                  <strong>Холодильник LG GN-B392</strong>
+                  <small>Код 04591 • 1 шт</small>
+                </div>
+                <div class="sale-amount">48 500 сом</div>
+              </div>
+
+              <div class="sale-form-grid">
+                <label><span>Клиент</span><div class="fake-input">Розничный покупатель</div></label>
+                <label><span>Оплата</span><div class="fake-input">M+ (6 мес)</div></label>
+                <label><span>Предоплата</span><div class="fake-input">6 000 сом</div></label>
+                <label><span>Доставка</span><div class="fake-input">Нужна • сегодня 18:00</div></label>
+              </div>
+
+              <div class="sale-summary">
+                <div><span>К оплате</span><strong>53 350 сом</strong></div>
+                <div><span>Комиссия</span><strong>4 850 сом</strong></div>
+                <div><span>Платеж в месяц</span><strong>7 891 сом</strong></div>
+              </div>
+
+              <div class="demo-button-row">
+                <button type="button">Создать документ</button>
+                <button class="secondary" type="button">Распечатать чек</button>
+              </div>
+            </article>
+
+            <article class="demo-panel side-panel">
+              <div class="panel-head">
+                <div>
+                  <h2>Что показывает демо</h2>
+                  <p>Продавец проводит сделку в одном окне.</p>
+                </div>
+              </div>
+              <ul class="feature-list">
+                <li>Поиск товара и цены из МойСклад</li>
+                <li>Наличные, QR, банк, смешанная оплата</li>
+                <li>Предоплата и рассрочка</li>
+                <li>Автосоздание продажи и чека</li>
+                <li>Фото чека и фискализация</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section class="demo-screen" data-screen-panel="documents">
+          <div class="demo-grid docs-grid">
+            <article class="demo-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">B2B документы</p>
+                  <h2>Счет для юрлица</h2>
+                </div>
+                <span class="demo-chip soft">PDF + отгрузка</span>
+              </div>
+              <div class="doc-preview">
+                <div class="doc-sheet">
+                  <h3>Счет на оплату № 0184</h3>
+                  <p>Контрагент: ОсОО ТехноИмпорт</p>
+                  <p>ИНН: 01234567890123</p>
+                  <table>
+                    <tr><th>Товар</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr>
+                    <tr><td>Кондиционер Midea</td><td>10</td><td>24 000</td><td>240 000</td></tr>
+                    <tr><td>Микроволновка LG</td><td>6</td><td>9 500</td><td>57 000</td></tr>
+                  </table>
+                  <div class="doc-total">Итого: 297 000 сом</div>
+                </div>
+              </div>
+            </article>
+            <article class="demo-panel side-panel">
+              <div class="panel-head"><div><h2>Сценарий</h2><p>Для оптовиков и юрлиц.</p></div></div>
+              <div class="mini-stat-grid">
+                <div><span>Новый контрагент</span><strong>1 клик</strong></div>
+                <div><span>PDF счет</span><strong>Авто</strong></div>
+                <div><span>Отгрузка</span><strong>В МойСклад</strong></div>
+                <div><span>Фото товара</span><strong>В PDF</strong></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="demo-screen" data-screen-panel="commissions">
+          <div class="demo-grid commission-grid">
+            <article class="demo-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Аналитика удержаний</p>
+                  <h2>Банковские комиссии</h2>
+                </div>
+              </div>
+              <div class="commission-chart">
+                <div class="demo-bar tall"><span>M+ 6 мес</span><b>78 513 сом</b></div>
+                <div class="demo-bar mid"><span>Банк Азии 12 мес</span><b>39 628 сом</b></div>
+                <div class="demo-bar small"><span>M+ 3 мес</span><b>10 520 сом</b></div>
+                <div class="demo-bar xs"><span>O! 6 мес</span><b>4 750 сом</b></div>
+              </div>
+            </article>
+            <article class="demo-panel side-panel">
+              <div class="panel-head"><div><h2>Итог по банку</h2><p>M+ (6 мес)</p></div></div>
+              <div class="mini-stat-grid">
+                <div><span>Комиссия</span><strong>78 513 сом</strong></div>
+                <div><span>Оборот</span><strong>849 050 сом</strong></div>
+                <div><span>Чистая сумма</span><strong>770 537 сом</strong></div>
+                <div><span>Средний %</span><strong>9,25%</strong></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="demo-screen" data-screen-panel="control">
+          <div class="demo-grid control-grid">
+            <article class="demo-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Контроль бизнеса</p>
+                  <h2>Что видит владелец</h2>
+                </div>
+              </div>
+              <div class="control-board">
+                <div class="control-item"><span>Расходы</span><strong>405 000 сом</strong><small>9 записей</small></div>
+                <div class="control-item"><span>Зарплаты</span><strong>312 400 сом</strong><small>11 сотрудников</small></div>
+                <div class="control-item"><span>Доставки</span><strong>18 в пути</strong><small>5 срочных</small></div>
+                <div class="control-item"><span>Калькулятор таможни</span><strong>6 партий</strong><small>Себестоимость сохранена</small></div>
+              </div>
+            </article>
+            <article class="demo-panel side-panel">
+              <div class="panel-head"><div><h2>Безопасность показа</h2><p>Эта страница не трогает боевую систему.</p></div></div>
+              <ul class="feature-list">
+                <li>Нет логина в реальную CRM</li>
+                <li>Нет запросов к МойСклад</li>
+                <li>Нет запросов к Supabase</li>
+                <li>Только демонстрационные данные</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/demo.js"></script>
+  </body>
+  </html>

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Калькулятор таможни</title>
-    <link rel="stylesheet" href="/customs-calculator.css?v=20260627-customs-global-party-v2">
+    <link rel="stylesheet" href="/customs-calculator.css?v=20260701-customs-history-owner-v3">
     <link rel="stylesheet" href="/crm-shell.css?v=20260626-dark-fix">
   </head>
   <body>
@@ -56,6 +56,26 @@
           <article class="summary-primary"><span>Себестоимость партии</span><strong id="landedTotal">0,00 USD</strong></article>
         </section>
 
+        <section class="customs-search-card">
+          <div class="section-heading">
+            <div>
+              <h2>Результаты поиска</h2>
+              <p id="catalogStatus">Каталог загружается. Этот блок необязателен, товары можно заводить полностью вручную.</p>
+            </div>
+          </div>
+          <div id="searchResults" class="customs-search-results"></div>
+        </section>
+
+        <section class="customs-rows-card">
+          <div class="section-heading">
+            <div>
+              <h2>Товары в партии</h2>
+              <p>Каждая строка это отдельный товар. В строке вы указываете закупку, вес, объём и количество, а общие таможенные расходы сверху автоматически распределяются на весь приход.</p>
+            </div>
+          </div>
+          <div id="rowsList" class="customs-rows-list"></div>
+        </section>
+
         <section class="customs-party-card">
           <div class="section-heading">
             <div>
@@ -89,7 +109,7 @@
               <input id="partyEscortInput" type="number" min="0" step="0.01" value="0">
             </label>
             <label>
-              <span>Доставка Китай → КР, USD</span>
+              <span>Транспорт, USD</span>
               <input id="partyDeliveryUsdInput" type="number" min="0" step="0.01" value="0">
             </label>
             <label>
@@ -97,38 +117,15 @@
               <select id="partyDistributionModeSelect">
                 <option value="weight">Весу</option>
                 <option value="volume">Объему</option>
-                <option value="greater" selected>Тому, что больше</option>
               </select>
             </label>
           </div>
           <div class="customs-party-stats">
             <article><span>Общие расходы, сом</span><strong id="partyCommonKgsTotal">0,00 сом</strong></article>
             <article><span>Общие расходы, USD</span><strong id="partyCommonUsdTotal">0,00 USD</strong></article>
-            <article><span>С доставкой, USD</span><strong id="partyCommonUsdWithDeliveryTotal">0,00 USD</strong></article>
-            <article><span>Коэффициент по вашей формуле</span><strong id="partyWeightFormulaRate">0,00 USD</strong></article>
+            <article><span>С транспортом, USD</span><strong id="partyCommonUsdWithDeliveryTotal">0,00 USD</strong></article>
             <article><span>Ставка на 1 кг / 1 м³</span><strong id="partyRatePerBase">0,00 USD</strong></article>
-            <article><span>Если делить на тонны</span><strong id="partyRatePerTon">0,00 USD</strong></article>
           </div>
-        </section>
-
-        <section class="customs-search-card">
-          <div class="section-heading">
-            <div>
-              <h2>Результаты поиска</h2>
-              <p id="catalogStatus">Каталог загружается. Этот блок необязателен, товары можно заводить полностью вручную.</p>
-            </div>
-          </div>
-          <div id="searchResults" class="customs-search-results"></div>
-        </section>
-
-        <section class="customs-rows-card">
-          <div class="section-heading">
-            <div>
-              <h2>Товары в партии</h2>
-              <p>Каждая строка это отдельный товар. В строке вы указываете закупку, вес, объём и количество, а общие таможенные расходы сверху автоматически распределяются на весь приход.</p>
-            </div>
-          </div>
-          <div id="rowsList" class="customs-rows-list"></div>
         </section>
 
         <section class="customs-summary-table-card">
@@ -139,9 +136,10 @@
             </div>
           </div>
           <div id="productSummaryTable" class="customs-product-summary"></div>
+          <div id="productSummaryFooter" class="customs-party-stats"></div>
         </section>
       </section>
     </main>
-    <script src="/customs-calculator.js?v=20260627-customs-global-party-v2" type="module"></script>
+    <script src="/customs-calculator.js?v=20260701-customs-history-owner-v3" type="module"></script>
   </body>
 </html>

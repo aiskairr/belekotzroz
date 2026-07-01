@@ -9,12 +9,35 @@
   <body>
     <section id="crmLoginScreen" class="crm-login-screen">
       <form id="crmLoginForm" class="crm-login-card">
-        <div class="crm-login-brand"><span>O</span><div><strong>Ordo CRM</strong><small>Продажи, учет и автоматизация</small></div></div>
-        <div><p class="eyebrow">Защищенный доступ</p><h1>Вход в систему</h1><p>Возможности CRM зависят от вашей роли.</p></div>
-        <label><span>Сотрудник</span><select id="crmLogin" autocomplete="username" required><option value="">Загружаю сотрудников...</option></select></label>
-        <label><span>Пароль</span><input id="crmPassword" type="password" autocomplete="current-password" required></label>
-        <button type="submit">Войти</button>
-        <p id="crmLoginStatus" class="status"></p>
+        <div class="crm-login-cover">
+          <div class="crm-login-brand">
+            <img src="/ordo-logo-light.svg" alt="Ordo CRM">
+            <div><strong>Ordo CRM</strong><small>Продажи, учет и автоматизация</small></div>
+          </div>
+          <div class="crm-login-copy">
+            <p class="eyebrow">Защищенный доступ</p>
+            <h1>Вход в систему</h1>
+            <p>Рабочее место продавца, отчеты владельца, документы, комиссии, расходы и контроль в одной CRM.</p>
+          </div>
+          <div class="crm-login-highlights">
+            <span>МойСклад</span>
+            <span>NewCas</span>
+            <span>2 филиала</span>
+          </div>
+        </div>
+
+        <div class="crm-login-form-block">
+          <div class="crm-login-form-head">
+            <p class="eyebrow">Авторизация</p>
+            <h2>Добро пожаловать</h2>
+            <p>Возможности системы зависят от вашей роли и филиала.</p>
+          </div>
+
+          <label><span>Сотрудник</span><select id="crmLogin" autocomplete="username" required><option value="">Загружаю сотрудников...</option></select></label>
+          <label><span>Пароль</span><input id="crmPassword" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Войти в CRM</button>
+          <p id="crmLoginStatus" class="status"></p>
+        </div>
       </form>
     </section>
 
@@ -39,8 +62,7 @@
 
     <aside id="crmSidebar" class="crm-sidebar hidden">
       <div class="crm-brand">
-        <span class="crm-brand-mark">O</span>
-        <div><strong>Ordo CRM</strong><small>МойСклад</small></div>
+        <img class="crm-brand-logo" src="/ordo-logo-light.svg" alt="Ordo CRM">
       </div>
       <nav class="crm-nav" aria-label="Основная навигация">
         <a id="salesNavLink" class="active" href="/sales.html" data-permission="sales">Продажи</a>
@@ -81,6 +103,13 @@
         <button id="topSettingsButton" class="profile-button" type="button"><span id="profileInitials">OR</span><b id="topUserName">Ordo</b></button>
       </div>
     </header>
+
+    <aside id="moyskladMonitor" class="moysklad-monitor hidden" aria-live="polite">
+      <strong>МойСклад</strong>
+      <span id="moyskladMonitorRpm">0 / 120 в мин</span>
+      <span id="moyskladMonitorQueue">Очередь: 0</span>
+      <span id="moyskladMonitorActive">Активно: 0</span>
+    </aside>
 
     <main class="app">
       <section class="crm-overview wide">
@@ -367,6 +396,7 @@
         </div>
         <div class="modal-actions">
           <button id="printDocumentButton" type="button">Распечатать</button>
+          <button id="retryFiscalizationButton" class="secondary-button hidden" type="button">Фискализация</button>
           <button id="openMoyskladButton" class="secondary-button" type="button">Открыть в МойСклад</button>
           <button id="closeSuccessModalButton" class="secondary-button" type="button">Закрыть</button>
         </div>

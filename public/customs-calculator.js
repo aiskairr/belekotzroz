@@ -12,7 +12,7 @@ const DEFAULT_PARTY_EXPENSES = {
   seal: 0,
   escort: 0,
   deliveryUsd: 0,
-  distributionMode: 'greater'
+  distributionMode: 'weight'
 };
 
 const state = {
@@ -59,10 +59,9 @@ const els = Object.fromEntries([
   'partyCommonKgsTotal',
   'partyCommonUsdTotal',
   'partyCommonUsdWithDeliveryTotal',
-  'partyWeightFormulaRate',
   'partyRatePerBase',
-  'partyRatePerTon',
-  'productSummaryTable'
+  'productSummaryTable',
+  'productSummaryFooter'
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 init();
@@ -95,7 +94,7 @@ function bindEvents() {
   bindPartyExpenseField(els.partyEscortInput, 'escort');
   bindPartyExpenseField(els.partyDeliveryUsdInput, 'deliveryUsd');
   els.partyDistributionModeSelect.addEventListener('change', () => {
-    state.partyExpenses.distributionMode = els.partyDistributionModeSelect.value || 'greater';
+    state.partyExpenses.distributionMode = els.partyDistributionModeSelect.value || 'weight';
     saveDraft();
     renderRows();
   });
@@ -174,7 +173,7 @@ function handleRowInput(event) {
   if (!row) return;
   const field = event.target.dataset.field;
   if (!field) return;
-  const nextValue = ['name', 'code', 'article', 'buyPriceCurrency', 'model', 'photoColor', 'specification', 'boxVariant', 'paymentType'].includes(field)
+  const nextValue = ['name', 'code', 'article', 'buyPriceCurrency', 'photoColor', 'specification', 'boxVariant', 'paymentType'].includes(field)
     ? event.target.value
     : Number(event.target.value || 0);
   row[field] = nextValue;
@@ -201,7 +200,6 @@ function createRow(product = null) {
   return {
     id: `row-${Date.now()}-${state.rowSeq++}`,
     productId: product?.id || '',
-    model: product?.article || product?.code || '',
     photoColor: '',
     code: product?.code || '',
     article: product?.article || '',
@@ -230,7 +228,6 @@ function hydrateRowsFromCatalog() {
     const buyPrice = normalizeBuyPrice(product.buyPrice);
     return {
       ...row,
-      model: row.model || product.article || product.code || '',
       code: product.code || row.code,
       article: product.article || row.article,
       name: product.name || row.name,
@@ -292,10 +289,6 @@ function renderRows() {
       <div class="customs-row-section">
         <div class="customs-section-caption">Основное</div>
         <div class="customs-row-grid">
-          <label>
-            <span>Модель</span>
-            <input data-field="model" type="text" value="${escapeAttr(row.model || '')}" placeholder="Например: KPA17">
-          </label>
           <label class="wide">
             <span>Название товара</span>
             <input data-field="name" type="text" value="${escapeAttr(row.name || '')}" placeholder="Например: пылесос Ordo">
@@ -311,11 +304,11 @@ function renderRows() {
               <option value="master" ${row.boxVariant === 'master' ? 'selected' : ''}>Мастер-коробка</option>
             </select>
           </label>
+          ${row.boxVariant === 'master' ? `
           <label>
-            <span>${row.boxVariant === 'master' ? 'Кол-во мастер-коробок' : 'Кол-во коробок'}</span>
+            <span>Кол-во коробок</span>
             <input data-field="boxesCount" type="number" min="0" step="1" value="${numberValue(row.boxesCount)}">
           </label>
-          ${row.boxVariant === 'master' ? `
           <label>
             <span>Штук в коробке</span>
             <input data-field="unitsPerBox" type="number" min="0" step="1" value="${numberValue(row.unitsPerBox)}">
@@ -370,7 +363,6 @@ function renderRows() {
         <div class="customs-metric"><span>Вес / объём</span><strong>${formatWeightVolume(calculation)}</strong></div>
         <div class="customs-metric"><span>Вес партии</span><strong>${formatMeasure(calculation.totalWeightKg, 'кг')}</strong></div>
         <div class="customs-metric"><span>Коробки / штуки</span><strong>${formatBoxes(row, calculation.quantity)}</strong></div>
-        <div class="customs-metric"><span>База распределения</span><strong>${formatMeasureValue(calculation.distributionBaseTotal)}</strong></div>
         <div class="customs-metric"><span>Ставка общих расходов</span><strong>${formatUsd(calculation.sharedRateUsd)}</strong></div>
         <div class="customs-metric"><span>Нагрузка на 1 шт</span><strong>${formatUsd(calculation.sharedPerUnitUsd)}</strong></div>
         <div class="customs-metric"><span>Прибыль по строке</span><strong>${formatUsd(calculation.profitTotalUsd)}</strong></div>
@@ -394,7 +386,7 @@ function renderHistoryList() {
   els.historyList.innerHTML = state.history.map((item) => `<article class="customs-history-item">
     <div>
       <strong>${escapeHtml(item.title || 'Без названия')}</strong>
-      <small>${escapeHtml(formatDateTime(item.updated_at || item.created_at))}</small>
+      <small>${escapeHtml(formatHistoryMeta(item))}</small>
     </div>
     <button type="button" data-history-id="${escapeHtml(item.id)}">Загрузить</button>
   </article>`).join('');
@@ -403,12 +395,13 @@ function renderHistoryList() {
 function renderProductSummaryTable(context = buildPartyContext()) {
   if (!state.rows.length) {
     els.productSummaryTable.innerHTML = '<div class="customs-empty">Таблица появится после добавления товаров.</div>';
+    els.productSummaryFooter.innerHTML = '';
     return;
   }
   const rows = state.rows.map((row) => {
     const calculation = calculateRow(row, context);
     return `<tr>
-      <td>${escapeHtml(row.name || row.model || 'Без названия')}</td>
+      <td>${escapeHtml(row.name || 'Без названия')}</td>
       <td>${formatNumber(calculation.quantity)}</td>
       <td>${formatUsd(calculation.finalPerUnitUsd)}</td>
       <td>${formatVolumePerUnit(row, calculation)}</td>
@@ -427,6 +420,7 @@ function renderProductSummaryTable(context = buildPartyContext()) {
     </thead>
     <tbody>${rows}</tbody>
   </table>`;
+  els.productSummaryFooter.innerHTML = `<article><span>Общие расходы партии</span><strong>${formatUsd(context.totalCommonUsd)}</strong></article>`;
 }
 
 function renderSummary() {
@@ -438,13 +432,11 @@ function renderSummary() {
   els.partySealInput.value = numberValue(state.partyExpenses.seal);
   els.partyEscortInput.value = numberValue(state.partyExpenses.escort);
   els.partyDeliveryUsdInput.value = numberValue(state.partyExpenses.deliveryUsd);
-  els.partyDistributionModeSelect.value = state.partyExpenses.distributionMode || 'greater';
+  els.partyDistributionModeSelect.value = state.partyExpenses.distributionMode || 'weight';
   els.partyCommonKgsTotal.textContent = formatSom(context.commonKgs);
   els.partyCommonUsdTotal.textContent = formatUsd(context.commonUsd);
   els.partyCommonUsdWithDeliveryTotal.textContent = formatUsd(context.totalCommonUsd);
-  els.partyWeightFormulaRate.textContent = `${formatUsd(context.weightFormulaRateUsd)} / 1 кг`;
   els.partyRatePerBase.textContent = `${formatUsd(context.sharedRateUsd)} / ${context.distributionBasis === 'объем' ? '1 м³' : '1 кг'}`;
-  els.partyRatePerTon.textContent = formatUsd(context.ratePerTonUsd);
 
   const totals = state.rows.reduce((acc, row) => {
     const calculation = calculateRow(row, context);
@@ -494,21 +486,15 @@ function buildPartyContext() {
     return acc;
   }, { units: 0, weight: 0, volume: 0 });
 
-  const mode = state.partyExpenses.distributionMode || 'greater';
+  const mode = state.partyExpenses.distributionMode || 'weight';
   let denominator = totals.weight;
   let basis = 'вес';
   if (mode === 'volume') {
     denominator = totals.volume;
     basis = 'объем';
-  } else if (mode === 'greater') {
-    const useVolume = totals.volume > totals.weight;
-    denominator = useVolume ? totals.volume : totals.weight;
-    basis = useVolume ? 'объем' : 'вес';
   }
 
   const sharedRateUsd = denominator > 0 ? roundMoney(totalCommonUsd / denominator) : 0;
-  const weightFormulaRateUsd = totals.weight > 0 ? roundMoney(totalCommonUsd / totals.weight) : 0;
-  const ratePerTonUsd = totals.weight > 0 ? roundMoney(totalCommonUsd / (totals.weight / 1000)) : 0;
   return {
     rate,
     units: totals.units,
@@ -521,9 +507,7 @@ function buildPartyContext() {
     distributionMode: mode,
     distributionBasis: basis,
     distributionDenominator: roundMoney(denominator),
-    sharedRateUsd,
-    weightFormulaRateUsd,
-    ratePerTonUsd
+    sharedRateUsd
   };
 }
 
@@ -590,7 +574,7 @@ function calculateRow(row, context = buildPartyContext()) {
 }
 
 function getRowQuantity(row) {
-  const byBoxes = Number(row.boxesCount || 0) > 0 && Number(row.unitsPerBox || 0) > 0
+  const byBoxes = row.boxVariant === 'master' && Number(row.boxesCount || 0) > 0 && Number(row.unitsPerBox || 0) > 0
     ? Number(row.boxesCount || 0) * Number(row.unitsPerBox || 0)
     : Number(row.quantity || 0);
   return Math.max(1, Number(byBoxes || 1));
@@ -609,7 +593,7 @@ function getRowTotalVolumeM3(row) {
   if (row.boxVariant === 'master') {
     return roundMoney(Number(row.masterBoxVolume || 0) * Math.max(0, Number(row.boxesCount || 0)));
   }
-  return roundMoney(Number(row.boxSize || 0) * Math.max(0, Number(row.boxesCount || 0)));
+  return roundMoney(Number(row.boxSize || 0) * getRowQuantity(row));
 }
 
 function normalizeBuyPrice(buyPrice) {
@@ -658,6 +642,9 @@ function loadDraft() {
       ...DEFAULT_PARTY_EXPENSES,
       ...(draft.partyExpenses || {})
     };
+    if (!['weight', 'volume'].includes(state.partyExpenses.distributionMode)) {
+      state.partyExpenses.distributionMode = 'weight';
+    }
   } catch {
     state.rows = [];
     state.rowSeq = 1;
@@ -726,9 +713,14 @@ async function restoreHistoryItem(id) {
 }
 
 function buildHistoryTitle() {
-  const first = state.rows.find((row) => String(row.name || row.model || '').trim());
-  const base = first ? String(first.name || first.model).trim() : 'Расчет таможни';
+  const first = state.rows.find((row) => String(row.name || '').trim());
+  const base = first ? String(first.name).trim() : 'Расчет таможни';
   return `${base} • ${new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date())}`;
+}
+
+function formatHistoryMeta(item) {
+  const who = item?.owner_name ? ` · ${item.owner_name}` : '';
+  return `${formatDateTime(item.updated_at || item.created_at)}${who}`;
 }
 
 function formatDateTime(value) {
@@ -793,9 +785,6 @@ function formatBoxes(row, quantity) {
   const unitsPerBox = Number(row.unitsPerBox || 0);
   if (row.boxVariant === 'master' && boxes > 0 && unitsPerBox > 0) {
     return `${formatNumber(boxes)} мастер × ${formatNumber(unitsPerBox)} шт = ${formatNumber(quantity)} шт`;
-  }
-  if (boxes > 0 && unitsPerBox > 0) {
-    return `${formatNumber(boxes)} короб. × ${formatNumber(unitsPerBox)} шт = ${formatNumber(quantity)} шт`;
   }
   return `${formatNumber(quantity)} шт`;
 }

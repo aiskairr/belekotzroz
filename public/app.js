@@ -27,6 +27,7 @@ const fiscalStatusBadge = document.querySelector('#fiscalStatusBadge');
 const fiscalStatusTitle = document.querySelector('#fiscalStatusTitle');
 const fiscalStatusText = document.querySelector('#fiscalStatusText');
 const fiscalStatusChecklist = document.querySelector('#fiscalStatusChecklist');
+const retryFiscalizationButton = document.querySelector('#retryFiscalizationButton');
 const printDocumentButton = document.querySelector('#printDocumentButton');
 const openMoyskladButton = document.querySelector('#openMoyskladButton');
 const closeSuccessModalButton = document.querySelector('#closeSuccessModalButton');
@@ -61,6 +62,11 @@ const closeSettingsButton = document.querySelector('#closeSettingsButton');
 const sidebarToggle = document.querySelector('#sidebarToggle');
 const processSteps = [...document.querySelectorAll('.process-steps span')];
 const debtSaleMode = window.location.pathname === '/debt-sale.html';
+const moyskladMonitor = document.querySelector('#moyskladMonitor');
+const moyskladMonitorRpm = document.querySelector('#moyskladMonitorRpm');
+const moyskladMonitorQueue = document.querySelector('#moyskladMonitorQueue');
+const moyskladMonitorActive = document.querySelector('#moyskladMonitorActive');
+let moyskladMonitorTimer = 0;
 
 form.noValidate = true;
 
@@ -268,6 +274,7 @@ async function enterCrm(user) {
   applyUiSettings();
   syncSettingsControls();
   applyRoleAccess(user);
+  startMoySkladMonitor();
   crmLoginScreen.classList.add('hidden');
   const requestedPage = getRequestedPage();
   const requiredPermission = debtSaleMode ? 'debtSale' : 'sales';
@@ -627,13 +634,18 @@ form.addEventListener('submit', async (event) => {
     const paymentText = data.document?.payment?.name ? ` Входящий платеж №${data.document.payment.name} создан.` : '';
     const deliveryText = data.delivery ? ' Доставка добавлена в расписание.' : '';
     const deliveryErrorText = data.deliveryError ? ` Внимание: доставка не сохранена (${data.deliveryError}).` : '';
+    const fiscalizationText = data.fiscalization?.success
+      ? ' Чек отправлен на автофискализацию.'
+      : data.fiscalization?.attempted && data.fiscalization?.error
+        ? ` Внимание: автофискализация не ушла (${data.fiscalization.error}).`
+        : '';
     const telegramText = data.telegramReceipt?.sent ? ' Фото чека отправлено в Telegram.' : '';
     const telegramErrorText = data.telegramReceipt?.error ? ` Внимание: фото не отправлено (${data.telegramReceipt.error}).` : '';
     const loyaltyText = getLoyaltyResultText(data.loyalty);
     lastCreatedOrder = { ...data, requestPayload: payload };
     clearDraft();
-    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${telegramText}${telegramErrorText}${loyaltyText}`);
-    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${telegramText}${telegramErrorText}${loyaltyText}`, data.deliveryError || data.telegramReceipt?.error ? 'error' : 'success');
+    showSuccessModal(lastCreatedOrder, `${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${fiscalizationText}${telegramText}${telegramErrorText}${loyaltyText}`);
+    setStatus(`Готово. ${documentTitle}${documentName} создан в МойСклад.${paymentText}${deliveryText}${deliveryErrorText}${fiscalizationText}${telegramText}${telegramErrorText}${loyaltyText}`, data.deliveryError || data.fiscalization?.error || data.telegramReceipt?.error ? 'error' : 'success');
     receiptPhotoInput.value = '';
     closeReceiptCamera();
     renderReceiptPhotoPreview();
@@ -669,7 +681,9 @@ async function loadEmployees() {
 }
 
 async function loadStores() {
-  const response = await fetch('/api/retail-stores');
+  const params = new URLSearchParams();
+  if (selectedBranch) params.set('branchName', branches[selectedBranch] || '');
+  const response = await fetch(`/api/retail-stores?${params}`);
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || 'Не удалось загрузить точки продаж.');
@@ -683,6 +697,9 @@ async function loadCustomers(search = '') {
   const params = new URLSearchParams();
   if (search.trim()) {
     params.set('search', search.trim());
+  }
+  if (selectedBranch) {
+    params.set('branchName', branches[selectedBranch] || '');
   }
 
   const response = await fetch(`/api/customers?${params}`);
@@ -711,6 +728,9 @@ async function loadProducts(search = '', options = {}) {
   const selectedStore = getSelectedStore();
   if (selectedStore?.storeHref) {
     params.set('storeHref', selectedStore.storeHref);
+  }
+  if (selectedBranch) {
+    params.set('branchName', branches[selectedBranch] || '');
   }
   const cacheKey = params.toString();
   if (productSearchCache.has(cacheKey)) {
@@ -1838,6 +1858,17 @@ function bindCrmShell() {
   branchCancelButton?.addEventListener('click', closeBranchSelection);
 }
 
+function readLocalUiSettingsRaw() {
+  try {
+    const raw = localStorage.getItem('mysrsUiSettings');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function openBranchSelection() {
   branchCancelButton?.classList.toggle('hidden', !selectedBranch);
   branchScreen.classList.remove('hidden');
@@ -1966,11 +1997,8 @@ function clearDraft() {
 }
 
 function loadUiSettings() {
-  try {
-    return normalizeUiSettings(JSON.parse(localStorage.getItem('mysrsUiSettings') || '{}'));
-  } catch {
-    return { ...defaultUiSettings };
-  }
+  const raw = readLocalUiSettingsRaw();
+  return raw ? normalizeUiSettings(raw) : { ...defaultUiSettings };
 }
 
 function applyUiSettings() {
@@ -2049,33 +2077,18 @@ function applyAccentColor(color) {
 }
 
 async function loadUserUiSettings() {
-  const localSettings = loadUiSettings();
-  uiSettings = normalizeUiSettings(localSettings);
+  const rawLocalSettings = readLocalUiSettingsRaw();
+  const localSettings = rawLocalSettings ? normalizeUiSettings(rawLocalSettings) : null;
+  uiSettings = localSettings ? normalizeUiSettings(localSettings) : { ...defaultUiSettings };
   if (!currentCrmUser) return;
   try {
     const response = await fetch('/api/crm/ui-settings');
     const data = await response.json();
     if (!response.ok) throw new Error(data?.error || 'Не удалось загрузить настройки CRM.');
     const remoteSettings = normalizeUiSettings(data?.settings || {});
-    uiSettings = normalizeUiSettings({
-      ...remoteSettings,
-      ...localSettings,
-      theme: localSettings.theme || remoteSettings.theme,
-      mode: localSettings.mode || remoteSettings.mode,
-      density: localSettings.density || remoteSettings.density,
-      accentColor: localSettings.accentColor || remoteSettings.accentColor,
-      confirmBeforeSubmit: typeof localSettings.confirmBeforeSubmit === 'boolean'
-        ? localSettings.confirmBeforeSubmit
-        : remoteSettings.confirmBeforeSubmit,
-      focusProductSearch: typeof localSettings.focusProductSearch === 'boolean'
-        ? localSettings.focusProductSearch
-        : remoteSettings.focusProductSearch,
-      stickySummary: typeof localSettings.stickySummary === 'boolean'
-        ? localSettings.stickySummary
-        : remoteSettings.stickySummary
-    });
+    uiSettings = normalizeUiSettings(localSettings ? { ...remoteSettings, ...localSettings } : remoteSettings);
   } catch {
-    uiSettings = normalizeUiSettings(localSettings);
+    uiSettings = localSettings ? normalizeUiSettings(localSettings) : { ...defaultUiSettings };
   }
 }
 
@@ -2092,6 +2105,34 @@ async function saveUserUiSettings() {
   } catch {
     // keep local fallback for sales page if API is temporarily unavailable
   }
+}
+
+async function refreshMoySkladMonitor() {
+  if (!moyskladMonitor) return;
+  try {
+    const response = await fetch('/api/crm/moysklad-monitor');
+    const data = await response.json().catch(() => ({ stats: null }));
+    if (!response.ok || !data?.stats) {
+      throw new Error('monitor unavailable');
+    }
+    moyskladMonitor.classList.remove('hidden');
+    moyskladMonitorRpm.textContent = `${data.stats.requestsLastMinute} / ${data.stats.limitPerMinute} в мин`;
+    moyskladMonitorQueue.textContent = `Очередь: ${data.stats.waiting}${data.stats.nextDelayMs ? ` · ${Math.ceil(data.stats.nextDelayMs / 100) / 10}с` : ''}`;
+    moyskladMonitorActive.textContent = `Активно: ${data.stats.active}`;
+    moyskladMonitor.classList.toggle('warning', data.stats.requestsLastMinute >= 100 || data.stats.waiting > 0);
+  } catch {
+    moyskladMonitor.classList.add('hidden');
+  }
+}
+
+function startMoySkladMonitor() {
+  if (!currentCrmUser || currentCrmUser.role !== 'admin') {
+    moyskladMonitor?.classList.add('hidden');
+    return;
+  }
+  window.clearInterval(moyskladMonitorTimer);
+  refreshMoySkladMonitor();
+  moyskladMonitorTimer = window.setInterval(refreshMoySkladMonitor, 5000);
 }
 
 function updateCrmProgress() {
@@ -2390,6 +2431,8 @@ async function renderFiscalStatus(data) {
     fiscalStatusCard.classList.remove('ready', 'warning');
     if (fiscalStatusBadge) fiscalStatusBadge.textContent = 'NewCas';
     fiscalStatusChecklist.innerHTML = '';
+    retryFiscalizationButton?.classList.add('hidden');
+    retryFiscalizationButton && (retryFiscalizationButton.disabled = false);
     return;
   }
 
@@ -2399,9 +2442,13 @@ async function renderFiscalStatus(data) {
   fiscalStatusTitle.textContent = 'NewCas';
   fiscalStatusText.textContent = 'Проверяю готовность к автофискализации...';
   fiscalStatusChecklist.innerHTML = '';
+  retryFiscalizationButton?.classList.remove('hidden');
+  retryFiscalizationButton && (retryFiscalizationButton.onclick = () => retryFiscalization(data.document.id));
 
   try {
-    const response = await fetch(`/api/retail-fiscal-status?documentId=${encodeURIComponent(data.document.id)}`);
+    const params = new URLSearchParams({ documentId: data.document.id });
+    if (selectedBranch) params.set('branchName', branches[selectedBranch] || '');
+    const response = await fetch(`/api/retail-fiscal-status?${params}`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || 'Не удалось проверить фискальный статус.');
 
@@ -2430,6 +2477,49 @@ async function renderFiscalStatus(data) {
     fiscalStatusTitle.textContent = 'NewCas: статус не определен';
     fiscalStatusText.textContent = error.message || 'Не удалось проверить фискальный статус.';
     fiscalStatusChecklist.innerHTML = '<li class="fail">Проверка не выполнена</li>';
+  }
+}
+
+async function retryFiscalization(documentId) {
+  if (!documentId || !retryFiscalizationButton) return;
+  retryFiscalizationButton.disabled = true;
+  retryFiscalizationButton.textContent = 'Отправляю...';
+  try {
+    const response = await fetch('/api/retail-fiscalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentId, branchName: selectedBranch ? (branches[selectedBranch] || '') : '' })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Не удалось отправить на фискализацию.');
+
+    if (payload.success) {
+      if (fiscalStatusCard) {
+        fiscalStatusCard.classList.remove('warning');
+        fiscalStatusCard.classList.add('ready');
+      }
+      if (fiscalStatusBadge) fiscalStatusBadge.textContent = 'Авто';
+      if (fiscalStatusTitle) fiscalStatusTitle.textContent = 'NewCas: отправка выполнена';
+      if (fiscalStatusText) fiscalStatusText.textContent = 'Документ отправлен в очередь фискализации через web-RPC.';
+      if (fiscalStatusChecklist) fiscalStatusChecklist.innerHTML = '<li class="ok">Запрос на фискализацию успешно отправлен</li>';
+      setStatus('Документ отправлен на фискализацию.', 'success');
+      return;
+    }
+
+    throw new Error(payload.error || payload.reason || 'Фискализация не выполнена.');
+  } catch (error) {
+    if (fiscalStatusCard) {
+      fiscalStatusCard.classList.remove('ready');
+      fiscalStatusCard.classList.add('warning');
+    }
+    if (fiscalStatusBadge) fiscalStatusBadge.textContent = 'Ошибка';
+    if (fiscalStatusTitle) fiscalStatusTitle.textContent = 'NewCas: отправка не выполнена';
+    if (fiscalStatusText) fiscalStatusText.textContent = error.message || 'Не удалось отправить документ на фискализацию.';
+    if (fiscalStatusChecklist) fiscalStatusChecklist.innerHTML = '<li class="fail">Проверьте cookie web-сессии и параметры RPC</li>';
+    setStatus(error.message || 'Не удалось отправить документ на фискализацию.', 'error');
+  } finally {
+    retryFiscalizationButton.disabled = false;
+    retryFiscalizationButton.textContent = 'Фискализация';
   }
 }
 

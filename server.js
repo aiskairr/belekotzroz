@@ -74,6 +74,7 @@ let reportCurrencyExpandSupported = true;
 const staticAssetHashCache = new Map();
 const reportCookieName = 'mysrs_report_session';
 const crmCookieName = 'mysrs_crm_session_v2';
+const moySkladBranchLabels = { ayu: 'Аю-Гранд', besh: 'Беш-Сары' };
 const PRICE_FORMULA_TEMPLATE_START = '[ORDO_PRICE_TEMPLATE]';
 const PRICE_FORMULA_TEMPLATE_END = '[/ORDO_PRICE_TEMPLATE]';
 const PAYROLL_CONFIG_START = '[ORDO_PAYROLL]';
@@ -144,7 +145,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/crm/moysklad-monitor') {
-      requireCrmRole(req, ['admin']);
+      requireCrmRole(req, ['admin', 'owner']);
       sendJson(res, 200, { stats: getMoySkladMonitorStats() });
       return;
     }
@@ -338,7 +339,7 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/retail-stores') {
       requireAnyCrmPermission(req, ['sales', 'commercialDocuments']);
-      const retailStores = await getMoySkladRetailStores();
+      const retailStores = await getMoySkladRetailStores({ branchName: url.searchParams.get('branchName') || '' });
       sendJson(res, 200, { retailStores });
       return;
     }
@@ -349,7 +350,7 @@ const server = createServer(async (req, res) => {
       if (!retailStoreHref) {
         throw httpError(400, 'Укажите retailStoreHref.');
       }
-      const retailShifts = await getMoySkladRetailShifts(retailStoreHref);
+      const retailShifts = await getMoySkladRetailShifts(retailStoreHref, { branchName: url.searchParams.get('branchName') || '' });
       sendJson(res, 200, { retailShifts });
       return;
     }
@@ -360,8 +361,48 @@ const server = createServer(async (req, res) => {
       if (!documentId) {
         throw httpError(400, 'Укажите documentId.');
       }
-      const status = await getRetailFiscalStatus(documentId);
+      const status = await getRetailFiscalStatus(documentId, { branchName: url.searchParams.get('branchName') || '' });
       sendJson(res, 200, status);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/retail-fiscalize') {
+      const user = requireCrmPermission(req, 'sales');
+      const body = await readJson(req);
+      const documentId = String(body.documentId || body.id || url.searchParams.get('documentId') || '').trim();
+      if (!documentId) {
+        throw httpError(400, 'Укажите documentId.');
+      }
+      let result;
+      try {
+        const document = await getRetailDemandById(documentId, body);
+        result = await triggerRetailFiscalizationSafely(document, body);
+      } catch (error) {
+        result = {
+          attempted: true,
+          success: false,
+          error: error.message || 'Не удалось подготовить документ к фискализации.'
+        };
+      }
+      await writeAudit({
+        user,
+        action: result.success ? 'fiscal.manual.success' : 'fiscal.manual.error',
+        entity: 'retaildemand',
+        entityId: documentId,
+        description: result.success
+          ? `Ручная отправка на фискализацию: успешно, документ ${documentId}`
+          : `Ручная отправка на фискализацию: ошибка, документ ${documentId}`,
+        details: {
+          documentId,
+          success: Boolean(result.success),
+          mode: result.mode || process.env.MOYSKLAD_FISCALIZE_MODE || '',
+          error: result.error || '',
+          reason: result.reason || '',
+          serviceUrl: result.serviceUrl || result.endpoint || '',
+          responseText: String(result.responseText || '').slice(0, 1000)
+        }
+      });
+      sendJson(res, 200, result);
       return;
     }
 
@@ -373,7 +414,7 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, { products: [] });
         return;
       }
-      const products = await getMoySkladProducts(search, storeHref);
+      const products = await getMoySkladProducts(search, storeHref, { branchName: url.searchParams.get('branchName') || '' });
       sendJson(res, 200, { products });
       return;
     }
@@ -381,7 +422,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/customers') {
       requireAnyCrmPermission(req, ['sales', 'commercialDocuments']);
       const search = url.searchParams.get('search') || '';
-      const customers = await getMoySkladCustomers(search);
+      const customers = await getMoySkladCustomers(search, { branchName: url.searchParams.get('branchName') || '' });
       sendJson(res, 200, { customers });
       return;
     }
@@ -410,7 +451,7 @@ const server = createServer(async (req, res) => {
       let body = await readJson(req);
       const document = body.documentType === 'demand'
         ? await (async () => {
-            const token = requiredEnv('MOYSKLAD_TOKEN');
+            const token = getMoySkladTokenFor(body);
             const agentHref = await getOrCreateCounterparty(token, body);
             body = { ...body, agentHref, customerHref: body.customerHref || agentHref, customerMode: 'existing' };
             return createCommercialDemandDocument(body);
@@ -653,11 +694,37 @@ const server = createServer(async (req, res) => {
       }
       payrollReportCache.clear();
       salesReportCache.clear();
+      const fiscalization = document.type === 'retaildemand'
+        ? await triggerRetailFiscalizationSafely(document, body)
+        : { attempted: false, skipped: true };
       const loyalty = await applyLoyaltySafely(result, body, document);
       const telegramReceipt = body.receiptPhoto
         ? await sendTelegramReceiptSafely(body.receiptPhoto, result, body, document)
         : { sent: false, skipped: true };
-      const payload = { calculation: result, document, loyalty, delivery, deliveryError, telegramReceipt };
+      const payload = { calculation: result, document, loyalty, delivery, deliveryError, telegramReceipt, fiscalization };
+      if (document.type === 'retaildemand') {
+        await writeAudit({
+          user,
+          action: fiscalization?.success ? 'fiscal.auto.success' : 'fiscal.auto.error',
+          entity: 'retaildemand',
+          entityId: document.id || '',
+          description: fiscalization?.success
+            ? `Автофискализация отправлена: ${document.name || document.id || ''}`
+            : `Автофискализация не выполнена: ${document.name || document.id || ''}`,
+          details: {
+            documentId: document.id || '',
+            documentName: document.name || '',
+            success: Boolean(fiscalization?.success),
+            attempted: Boolean(fiscalization?.attempted),
+            skipped: Boolean(fiscalization?.skipped),
+            mode: fiscalization?.mode || process.env.MOYSKLAD_FISCALIZE_MODE || '',
+            error: fiscalization?.error || '',
+            reason: fiscalization?.reason || '',
+            serviceUrl: fiscalization?.serviceUrl || fiscalization?.endpoint || '',
+            responseText: String(fiscalization?.responseText || '').slice(0, 1000)
+          }
+        });
+      }
       await writeAudit({
         user,
         action: 'sale.create',
@@ -814,15 +881,15 @@ function calculate(input) {
 }
 
 async function createMoySkladDocument(calculation, input) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const token = getMoySkladTokenFor(input);
   const documentType = String(input.documentType || resolveDocumentType(calculation));
-  const organizationHref = requiredEnv('MOYSKLAD_ORGANIZATION_HREF');
+  const organizationHref = getMoySkladEnvValue('ORGANIZATION_HREF', input);
   if (input.customerMode !== 'retail' && !String(input.customerPhone || '').trim()) {
     throw httpError(400, 'Укажите номер телефона клиента.');
   }
   const agentHref = await getOrCreateCounterparty(token, input);
-  const storeHref = input.storeHref || process.env.MOYSKLAD_STORE_HREF;
-  const retailStoreHref = input.retailStoreHref || process.env.MOYSKLAD_RETAIL_STORE_HREF;
+  const storeHref = input.storeHref || getMoySkladEnvValue('STORE_HREF', input);
+  const retailStoreHref = input.retailStoreHref || getMoySkladEnvValue('RETAIL_STORE_HREF', input);
 
   if (!['customerorder', 'demand', 'retaildemand'].includes(documentType)) {
     throw httpError(500, 'MOYSKLAD_DOCUMENT_TYPE должен быть auto, customerorder, demand или retaildemand.');
@@ -1166,8 +1233,8 @@ async function createIncomingPayment(token, input) {
 }
 
 async function createCommercialMoySkladDocument(input) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
-  const organizationHref = requiredEnv('MOYSKLAD_ORGANIZATION_HREF');
+  const token = getMoySkladTokenFor(input);
+  const organizationHref = getMoySkladEnvValue('ORGANIZATION_HREF', input);
   const documentType = String(input.documentType || 'customerorder');
   if (!['customerorder', 'demand'].includes(documentType)) {
     throw httpError(400, 'Выберите тип документа: счет или отгрузка.');
@@ -1175,7 +1242,7 @@ async function createCommercialMoySkladDocument(input) {
 
   const items = getOrderItems(input);
   const agentHref = await getOrCreateCounterparty(token, input);
-  const storeHref = input.storeHref || process.env.MOYSKLAD_STORE_HREF;
+  const storeHref = input.storeHref || getMoySkladEnvValue('STORE_HREF', input);
 
   if (documentType === 'demand' && !storeHref) {
     throw httpError(500, 'Для создания отгрузки нужен MOYSKLAD_STORE_HREF.');
@@ -1245,7 +1312,7 @@ async function createCommercialDemandDocument(input) {
   };
 
   const calculation = calculate(await hydrateOrderItemCosts(payload));
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const token = getMoySkladTokenFor(payload);
   const document = await createMoySkladDocument({
     ...calculation,
     documentType: 'demand'
@@ -1254,7 +1321,7 @@ async function createCommercialDemandDocument(input) {
 }
 
 async function createCommercialWordInvoice(input) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const token = getMoySkladTokenFor(input);
   const items = getOrderItems(input);
   await getOrCreateCounterparty(token, input);
 
@@ -1271,7 +1338,7 @@ async function createCommercialWordInvoice(input) {
 }
 
 async function createCommercialPdfInvoice(input) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const token = getMoySkladTokenFor(input);
   const items = await enrichInvoiceItemsWithImages(token, getOrderItems(input));
   await getOrCreateCounterparty(token, input);
 
@@ -1588,7 +1655,7 @@ async function getOrCreateCounterparty(token, input) {
     return input.agentHref;
   }
   if (input.customerMode === 'retail') {
-    return requiredEnv('MOYSKLAD_AGENT_HREF');
+    return getMoySkladEnvValue('AGENT_HREF', input);
   }
 
   if (input.customerMode === 'existing' && input.customerHref) {
@@ -1775,8 +1842,8 @@ async function findCounterparties(token, search) {
   return data.rows || [];
 }
 
-async function getMoySkladCustomers(search) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+async function getMoySkladCustomers(search, input = {}) {
+  const token = getMoySkladTokenFor(input);
   const params = new URLSearchParams({ limit: '30' });
   if (search.trim()) {
     params.set('search', search.trim());
@@ -1811,8 +1878,8 @@ async function getMoySkladCustomers(search) {
   }));
 }
 
-async function getMoySkladProducts(search, storeHref = '') {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+async function getMoySkladProducts(search, storeHref = '', input = {}) {
+  const token = getMoySkladTokenFor(input);
   const queries = getProductSearchQueries(search);
   const allProducts = [];
   const seen = new Set();
@@ -3609,26 +3676,54 @@ function fromMoySkladPrice(value) {
 }
 
 async function getMoySkladEmployees() {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
-  const customEntityId = requiredEnv('MOYSKLAD_EMPLOYEE_CUSTOM_ENTITY_ID');
-  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/customentity/${customEntityId}?limit=100`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json;charset=utf-8'
-    }
-  });
+  const branchConfigs = getMoySkladBranchConfigs().filter((config) => config.branchKey);
+  if (!branchConfigs.length) {
+    const token = requiredEnv('MOYSKLAD_TOKEN');
+    const customEntityId = requiredEnv('MOYSKLAD_EMPLOYEE_CUSTOM_ENTITY_ID');
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/customentity/${customEntityId}?limit=100`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
 
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw httpError(response.status, 'Не удалось загрузить сотрудников из МойСклад.', data);
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, 'Не удалось загрузить сотрудников из МойСклад.', data);
+    }
+
+    return (data.rows || []).map((item) => ({
+      id: item.id || getIdFromHref(item.meta?.href || ''),
+      name: item.name,
+      href: item.meta.href,
+      branchKey: '',
+      payroll: parsePayrollConfig(item.description || '')
+    }));
   }
 
-  return (data.rows || []).map((item) => ({
-    id: item.id || getIdFromHref(item.meta?.href || ''),
-    name: item.name,
-    href: item.meta.href,
-    payroll: parsePayrollConfig(item.description || '')
+  const results = await Promise.all(branchConfigs.map(async (config) => {
+    const customEntityId = String(process.env[`MOYSKLAD_${config.branchKey.toUpperCase()}_EMPLOYEE_CUSTOM_ENTITY_ID`] || process.env.MOYSKLAD_EMPLOYEE_CUSTOM_ENTITY_ID || '').trim();
+    if (!customEntityId) return [];
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/customentity/${customEntityId}?limit=100`, {
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, `Не удалось загрузить сотрудников из МойСклад (${moySkladBranchLabels[config.branchKey] || config.branchKey}).`, data);
+    }
+    return (data.rows || []).map((item) => ({
+      id: item.id || getIdFromHref(item.meta?.href || ''),
+      name: item.name,
+      href: item.meta?.href || '',
+      branchKey: config.branchKey,
+      payroll: parsePayrollConfig(item.description || '')
+    }));
   }));
+
+  return results.flat();
 }
 
 async function updateMoySkladEmployeePayrollConfig(input) {
@@ -3913,8 +4008,20 @@ async function getMoySkladStores() {
   }));
 }
 
-async function getMoySkladRetailStores() {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+async function getMoySkladRetailStores(input = {}) {
+  const branchKey = getMoySkladBranchKey(input);
+  if (branchKey) {
+    const retailStoreHref = getMoySkladEnvValue('RETAIL_STORE_HREF', input);
+    const storeHref = getMoySkladEnvValue('STORE_HREF', input);
+    if (retailStoreHref) {
+      return [{
+        href: retailStoreHref,
+        storeHref,
+        name: moySkladBranchLabels[branchKey] || branchKey
+      }];
+    }
+  }
+  const token = getMoySkladTokenFor(input);
   const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/retailstore?limit=100`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -3936,8 +4043,8 @@ async function getMoySkladRetailStores() {
   }));
 }
 
-async function getMoySkladRetailShifts(retailStoreHref) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+async function getMoySkladRetailShifts(retailStoreHref, input = {}) {
+  const token = getMoySkladTokenFor(input);
   const shifts = await getRetailShifts(token, retailStoreHref);
   return shifts.map((shift) => ({
     id: shift.id,
@@ -3951,8 +4058,8 @@ async function getMoySkladRetailShifts(retailStoreHref) {
   }));
 }
 
-async function getRetailFiscalStatus(documentId) {
-  const token = requiredEnv('MOYSKLAD_TOKEN');
+async function getRetailFiscalStatus(documentId, input = {}) {
+  const token = getMoySkladTokenFor(input);
   const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/retaildemand/${encodeURIComponent(documentId)}?expand=retailStore,retailShift,store,agent`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -3981,6 +4088,7 @@ async function getRetailFiscalStatus(documentId) {
   return {
     ready,
     checks,
+    branchKey: getMoySkladBranchKey(input),
     document: {
       id: data.id,
       name: data.name || '',
@@ -4238,6 +4346,189 @@ async function sendTelegramReceiptSafely(receiptPhoto, calculation, input, docum
   } catch (error) {
     return { sent: false, error: error.message || 'Не удалось отправить фото в Telegram.' };
   }
+}
+
+async function triggerRetailFiscalizationSafely(document, input = {}) {
+  try {
+    return await triggerRetailFiscalization(document, input);
+  } catch (error) {
+    return {
+      attempted: true,
+      success: false,
+      error: error.message || 'Не удалось отправить документ на фискализацию.'
+    };
+  }
+}
+
+async function triggerRetailFiscalization(document, input = {}) {
+  const mode = String(process.env.MOYSKLAD_FISCALIZE_MODE || '').trim().toLowerCase();
+  if (mode === 'web-rpc') {
+    return triggerRetailFiscalizationViaWebRpc(document, input);
+  }
+
+  const endpointTemplate = String(process.env.MOYSKLAD_FISCALIZE_ENDPOINT_TEMPLATE || '').trim();
+  if (!endpointTemplate) {
+    return {
+      attempted: false,
+      skipped: true,
+      reason: 'Не настроен MOYSKLAD_FISCALIZE_ENDPOINT_TEMPLATE'
+    };
+  }
+
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const documentId = String(document?.id || '').trim();
+  if (!documentId) {
+    return {
+      attempted: false,
+      skipped: true,
+      reason: 'Нет document.id для фискализации'
+    };
+  }
+
+  const method = String(process.env.MOYSKLAD_FISCALIZE_METHOD || 'POST').trim().toUpperCase();
+  const endpoint = endpointTemplate
+    .replaceAll('{documentId}', encodeURIComponent(documentId))
+    .replaceAll('{retailStoreHref}', encodeURIComponent(String(input.retailStoreHref || '')))
+    .replaceAll('{storeHref}', encodeURIComponent(String(input.storeHref || '')))
+    .replaceAll('{retailShiftHref}', encodeURIComponent(String(input.retailShiftHref || '')));
+
+  const bodyTemplate = String(process.env.MOYSKLAD_FISCALIZE_BODY || '').trim();
+  const body = bodyTemplate
+    ? bodyTemplate
+      .replaceAll('{documentId}', documentId)
+      .replaceAll('{retailStoreHref}', String(input.retailStoreHref || ''))
+      .replaceAll('{storeHref}', String(input.storeHref || ''))
+      .replaceAll('{retailShiftHref}', String(input.retailShiftHref || ''))
+    : '';
+
+  const response = await moySkladFetch(endpoint, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8',
+      ...(body ? { 'Content-Type': 'application/json;charset=utf-8' } : {})
+    },
+    ...(body ? { body } : {})
+  });
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw httpError(response.status, 'МойСклад не принял запрос на автофискализацию.', data);
+  }
+
+  return {
+    attempted: true,
+    success: true,
+    endpoint,
+    method,
+    response: data
+  };
+}
+
+async function triggerRetailFiscalizationViaWebRpc(document, input = {}) {
+  const documentId = String(document?.id || '').trim();
+  if (!documentId) {
+    return {
+      attempted: false,
+      skipped: true,
+      reason: 'Нет document.id для фискализации'
+    };
+  }
+
+  const serviceUrl = String(process.env.MOYSKLAD_WEB_FISCAL_SERVICE_URL || 'https://online.moysklad.ru/app/services/r1687/FiscalQueueService').trim();
+  const moduleBase = String(process.env.MOYSKLAD_WEB_FISCAL_GWT_BASE || 'https://cdn-static.moysklad.ru/app/cdn/r1687/').trim();
+  const strongName = String(process.env.MOYSKLAD_WEB_FISCAL_GWT_STRONG_NAME || '').trim();
+  const branchKey = getMoySkladBranchKey(input) || getMoySkladBranchKey(document);
+  const cookie = branchKey
+    ? String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_WEB_COOKIE`] || '').trim() || String(process.env.MOYSKLAD_WEB_COOKIE || '').trim()
+    : String(process.env.MOYSKLAD_WEB_COOKIE || '').trim();
+  if (!strongName || !cookie) {
+    return {
+      attempted: false,
+      skipped: true,
+      reason: 'Заполните MOYSKLAD_WEB_COOKIE и MOYSKLAD_WEB_FISCAL_GWT_STRONG_NAME'
+    };
+  }
+
+  const rpcBody = [
+    '7', '0', '6',
+    moduleBase,
+    strongName,
+    'com.lognex.sklad.face.common.client.module.fiscal.FiscalQueueService',
+    'add',
+    'java.util.UUID/2940008275',
+    documentId,
+    '1', '2', '3', '4', '1', '5', '5', '6'
+  ].join('|') + '|';
+
+  const response = await fetch(serviceUrl, {
+    method: 'POST',
+    headers: {
+      Accept: '*/*',
+      'Content-Type': 'text/x-gwt-rpc; charset=UTF-8',
+      'X-GWT-Module-Base': moduleBase,
+      'X-GWT-Permutation': strongName,
+      Origin: 'https://online.moysklad.ru',
+      Referer: `https://online.moysklad.ru/app/#retaildemand/edit?id=${encodeURIComponent(documentId)}`,
+      Cookie: cookie
+    },
+    body: rpcBody
+  });
+
+  const text = await response.text().catch(() => '');
+  if (!response.ok) {
+    throw httpError(response.status, 'Web-RPC МойСклад не принял запрос на фискализацию.', {
+      responseText: text.slice(0, 2000),
+      serviceUrl
+    });
+  }
+  if (!String(text).startsWith('//OK')) {
+    throw httpError(502, 'МойСклад вернул ошибку web-RPC при фискализации.', {
+      responseText: text.slice(0, 2000),
+      serviceUrl
+    });
+  }
+
+  return {
+    attempted: true,
+    success: true,
+    mode: 'web-rpc',
+    branchKey,
+    serviceUrl,
+    responseText: text.slice(0, 2000)
+  };
+}
+
+async function getRetailDemandById(documentId, input = {}) {
+  const token = getMoySkladTokenFor(input);
+  const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/retaildemand/${encodeURIComponent(documentId)}?expand=retailStore,retailShift,store,agent`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json;charset=utf-8'
+    }
+  });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data) {
+    throw httpError(response.status || 502, 'Не удалось загрузить розничную продажу для фискализации.', data);
+  }
+  return {
+    type: 'retaildemand',
+    id: data.id || documentId,
+    name: data.name || '',
+    sum: fromMoySkladPrice(data.sum),
+    cashSum: fromMoySkladPrice(data.cashSum),
+    noCashSum: fromMoySkladPrice(data.noCashSum),
+    retailStoreHref: data.retailStore?.meta?.href || '',
+    retailShiftHref: data.retailShift?.meta?.href || '',
+    storeHref: data.store?.meta?.href || '',
+    retailStoreName: data.retailStore?.name || '',
+    retailShiftName: data.retailShift?.name || '',
+    storeName: data.store?.name || '',
+    customerName: data.agent?.name || '',
+    moment: data.moment || '',
+    webUrl: getMoySkladWebUrl('retaildemand', data.id || documentId),
+    branchName: input.branchName || ''
+  };
 }
 
 async function sendTelegramPhoto(token, chatId, buffer, receiptPhoto, caption) {
@@ -4900,6 +5191,7 @@ async function getCrmLoginUsers() {
 }
 
 async function getManagedCrmUsers() {
+  await syncMoySkladEmployeesToCrmUsers().catch(() => {});
   let rows;
   try {
     rows = await supabaseGet('/rest/v1/crm_users', {
@@ -4913,6 +5205,91 @@ async function getManagedCrmUsers() {
     });
   }
   return rows.map(sanitizeManagedCrmUser);
+}
+
+async function syncMoySkladEmployeesToCrmUsers() {
+  const employees = await getMoySkladEmployees().catch(() => []);
+  if (!employees.length) return;
+
+  let currentRows = [];
+  try {
+    currentRows = await supabaseGet('/rest/v1/crm_users', {
+      select: 'id,login,name,branches',
+      order: 'name.asc'
+    });
+  } catch {
+    return;
+  }
+
+  const existingKeys = new Set();
+  const existingLogins = new Set();
+  const existingByNameKey = new Map();
+  for (const row of currentRows) {
+    existingLogins.add(String(row.login || '').trim().toLowerCase());
+    for (const key of getEmployeeLookupKeys(row.name)) {
+      if (!existingByNameKey.has(key)) {
+        existingByNameKey.set(key, row);
+      }
+    }
+    for (const branch of normalizeCrmBranches(row.branches)) {
+      for (const key of getEmployeeLookupKeys(row.name)) {
+        existingKeys.add(`${branch}|${key}`);
+      }
+    }
+  }
+
+  const payload = [];
+  const updates = [];
+  for (const employee of employees) {
+    const branchKey = employee.branchKey || 'ayu';
+    const keys = getEmployeeLookupKeys(employee.name);
+    const exists = keys.some((key) => existingKeys.has(`${branchKey}|${key}`));
+    if (exists) continue;
+
+    const existingRow = keys.map((key) => existingByNameKey.get(key)).find(Boolean);
+    if (existingRow) {
+      const mergedBranches = [...new Set([...normalizeCrmBranches(existingRow.branches), branchKey])];
+      updates.push({ id: existingRow.id, branches: mergedBranches });
+      keys.forEach((key) => existingKeys.add(`${branchKey}|${key}`));
+      continue;
+    }
+
+    let loginBase = `emp-${branchKey}-${String(employee.id || randomUUID()).slice(0, 8)}`.toLowerCase();
+    let login = loginBase;
+    let seq = 1;
+    while (existingLogins.has(login)) {
+      seq += 1;
+      login = `${loginBase}-${seq}`;
+    }
+    existingLogins.add(login);
+    keys.forEach((key) => existingKeys.add(`${branchKey}|${key}`));
+
+    payload.push({
+      login,
+      name: String(employee.name || '').trim().slice(0, 120) || 'Сотрудник',
+      position: 'Сотрудник МойСклад',
+      salary: 0,
+      role: 'seller',
+      branches: [branchKey],
+      permissions: normalizeCrmPermissions('seller', []),
+      active: true
+    });
+  }
+
+  for (const update of updates) {
+    await supabaseFetch(`${getSupabaseUrl()}/rest/v1/crm_users?id=eq.${encodeURIComponent(update.id)}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ branches: update.branches })
+    });
+  }
+
+  if (!payload.length) return;
+  await supabaseFetch(`${getSupabaseUrl()}/rest/v1/crm_users`, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(payload)
+  });
 }
 
 async function getCrmPayrollUsers() {
@@ -5065,12 +5442,14 @@ async function updateCrmUiSettings(user, input) {
 async function getCustomsCalculatorHistory(user) {
   if (!user?.id || String(user.id).startsWith('legacy:')) return [];
   try {
-    return await supabaseGet('/rest/v1/customs_calculator_history', {
-      select: 'id,title,payload,created_at,updated_at',
-      user_id: `eq.${user.id}`,
+    const canSeeAll = user.role === 'owner' || user.role === 'admin';
+    const rows = await supabaseGet('/rest/v1/customs_calculator_history', {
+      select: 'id,title,payload,created_at,updated_at,user_id',
+      ...(canSeeAll ? {} : { user_id: `eq.${user.id}` }),
       order: 'updated_at.desc,created_at.desc',
       limit: '30'
     });
+    return await decorateCustomsHistoryRows(rows);
   } catch {
     return [];
   }
@@ -5078,25 +5457,26 @@ async function getCustomsCalculatorHistory(user) {
 
 async function getCustomsCalculatorHistoryItem(id, user) {
   if (!user?.id || String(user.id).startsWith('legacy:')) throw httpError(403, 'Для этого пользователя история недоступна.');
+  const canSeeAll = user.role === 'owner' || user.role === 'admin';
   const rows = await supabaseGet('/rest/v1/customs_calculator_history', {
-    select: 'id,title,payload,created_at,updated_at',
+    select: 'id,title,payload,created_at,updated_at,user_id',
     id: `eq.${id}`,
-    user_id: `eq.${user.id}`,
+    ...(canSeeAll ? {} : { user_id: `eq.${user.id}` }),
     limit: '1'
   });
   if (!rows[0]) throw httpError(404, 'Запись истории не найдена.');
-  return rows[0];
+  return (await decorateCustomsHistoryRows(rows))[0];
 }
 
 async function saveCustomsCalculatorHistory(user, input) {
   if (!user?.id || String(user.id).startsWith('legacy:')) throw httpError(403, 'Для этого пользователя история недоступна.');
   const payload = normalizeCustomsCalculatorHistoryInput(input, user);
-  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/customs_calculator_history?select=id,title,payload,created_at,updated_at`, {
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/customs_calculator_history?select=id,title,payload,created_at,updated_at,user_id`, {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
     body: JSON.stringify(payload)
   });
-  return rows[0];
+  return (await decorateCustomsHistoryRows(rows))[0];
 }
 
 function normalizeCustomsCalculatorHistoryInput(input, user) {
@@ -5115,6 +5495,27 @@ function normalizeCustomsCalculatorHistoryInput(input, user) {
       partyExpenses
     }
   };
+}
+
+async function decorateCustomsHistoryRows(rows) {
+  const historyRows = Array.isArray(rows) ? rows : [];
+  const userIds = [...new Set(historyRows.map((row) => String(row.user_id || '')).filter(Boolean))];
+  if (!userIds.length) {
+    return historyRows.map((row) => ({ ...row, owner_name: '' }));
+  }
+  try {
+    const users = await supabaseGet('/rest/v1/crm_users', {
+      select: 'id,name,login',
+      id: `in.(${userIds.map((id) => `"${id}"`).join(',')})`
+    });
+    const byId = new Map((users || []).map((row) => [row.id, row.name || row.login || '']));
+    return historyRows.map((row) => ({
+      ...row,
+      owner_name: byId.get(row.user_id) || ''
+    }));
+  } catch {
+    return historyRows.map((row) => ({ ...row, owner_name: '' }));
+  }
 }
 
 function normalizeCrmUiSettings(input) {
@@ -5163,6 +5564,72 @@ function toSessionCrmUser(row) {
 
 function normalizeCrmBranches(branches) {
   return [...new Set((Array.isArray(branches) ? branches : []).filter((value) => value === 'ayu' || value === 'besh'))];
+}
+
+function normalizeBranchKey(branchName) {
+  const normalized = String(branchName || '').trim().toLocaleLowerCase('ru');
+  if (normalized.includes('аю')) return 'ayu';
+  if (normalized.includes('беш')) return 'besh';
+  return '';
+}
+
+function getMoySkladBranchKey(input = {}) {
+  const direct = normalizeBranchKey(input.branchName || input.branch || '');
+  if (direct) return direct;
+  const retailStoreHref = String(input.retailStoreHref || '').trim();
+  const storeHref = String(input.storeHref || '').trim();
+  for (const branchKey of ['ayu', 'besh']) {
+    const retailEnv = process.env[`MOYSKLAD_${branchKey.toUpperCase()}_RETAIL_STORE_HREF`] || '';
+    const storeEnv = process.env[`MOYSKLAD_${branchKey.toUpperCase()}_STORE_HREF`] || '';
+    if (retailStoreHref && retailEnv && retailStoreHref === retailEnv) return branchKey;
+    if (storeHref && storeEnv && storeHref === storeEnv) return branchKey;
+  }
+  return '';
+}
+
+function getMoySkladEnvValue(key, input = {}, fallback = '') {
+  const branchKey = getMoySkladBranchKey(input);
+  if (branchKey) {
+    const scoped = String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_${key}`] || '').trim();
+    if (scoped) return scoped;
+  }
+  return String(process.env[`MOYSKLAD_${key}`] || fallback).trim();
+}
+
+function getMoySkladTokenFor(input = {}) {
+  const token = getMoySkladEnvValue('TOKEN', input);
+  if (!token) throw httpError(500, `Не найден токен МойСклад для филиала ${moySkladBranchLabels[getMoySkladBranchKey(input)] || 'по умолчанию'}.`);
+  return token;
+}
+
+function getMoySkladBranchConfigs() {
+  const configs = [];
+  for (const branchKey of ['ayu', 'besh']) {
+    const token = String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_TOKEN`] || '').trim();
+    if (!token) continue;
+    configs.push({
+      branchKey,
+      token,
+      organizationHref: String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_ORGANIZATION_HREF`] || '').trim(),
+      agentHref: String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_AGENT_HREF`] || '').trim(),
+      storeHref: String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_STORE_HREF`] || '').trim(),
+      retailStoreHref: String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_RETAIL_STORE_HREF`] || '').trim(),
+      webCookie: String(process.env[`MOYSKLAD_${branchKey.toUpperCase()}_WEB_COOKIE`] || '').trim()
+    });
+  }
+  const defaultToken = String(process.env.MOYSKLAD_TOKEN || '').trim();
+  if (defaultToken) {
+    configs.push({
+      branchKey: '',
+      token: defaultToken,
+      organizationHref: String(process.env.MOYSKLAD_ORGANIZATION_HREF || '').trim(),
+      agentHref: String(process.env.MOYSKLAD_AGENT_HREF || '').trim(),
+      storeHref: String(process.env.MOYSKLAD_STORE_HREF || '').trim(),
+      retailStoreHref: String(process.env.MOYSKLAD_RETAIL_STORE_HREF || '').trim(),
+      webCookie: String(process.env.MOYSKLAD_WEB_COOKIE || '').trim()
+    });
+  }
+  return configs;
 }
 
 function normalizeCrmPermissions(role, permissions) {

@@ -136,7 +136,10 @@ function bindEvents() {
 }
 
 async function loadStores() {
-  const response = await fetch('/api/retail-stores');
+  const branchName = els.store.dataset.branchName || '';
+  const params = new URLSearchParams();
+  if (branchName) params.set('branchName', branchName);
+  const response = await fetch(`/api/retail-stores?${params}`);
   const data = await response.json().catch(() => ({ retailStores: [] }));
   const stores = Array.isArray(data.retailStores) ? data.retailStores : [];
   els.store.innerHTML = '<option value="">Без точки продаж</option>' + stores.map((store) =>
@@ -215,7 +218,10 @@ async function searchCustomers() {
   els.customerSearchMeta.innerHTML = '<span class="search-spinner"></span> Ищу контрагента...';
   els.customerResults.innerHTML = renderSearchSkeleton(3);
   try {
-    const response = await fetch(`/api/customers?search=${encodeURIComponent(q)}`, { signal: customerSearchController.signal });
+    const branchName = els.store.dataset.branchName || '';
+    const params = new URLSearchParams({ search: q });
+    if (branchName) params.set('branchName', branchName);
+    const response = await fetch(`/api/customers?${params}`, { signal: customerSearchController.signal });
     const data = await response.json().catch(() => ({ customers: [] }));
     const customers = Array.isArray(data.customers) ? data.customers : [];
     els.customerSearchMeta.textContent = customers.length
@@ -270,7 +276,10 @@ async function searchProducts() {
   els.productSearchMeta.innerHTML = `<span class="search-spinner"></span> Ищу товар для строки ${activeItemIndex + 1}...`;
   els.productResults.innerHTML = renderSearchSkeleton(4);
   try {
-    const response = await fetch(`/api/products?search=${encodeURIComponent(q)}&storeHref=${encodeURIComponent(els.store.value || '')}`, { signal: productSearchController.signal });
+    const branchName = els.store.dataset.branchName || '';
+    const params = new URLSearchParams({ search: q, storeHref: els.store.value || '' });
+    if (branchName) params.set('branchName', branchName);
+    const response = await fetch(`/api/products?${params}`, { signal: productSearchController.signal });
     const data = await response.json().catch(() => ({ products: [] }));
     const products = Array.isArray(data.products) ? data.products : [];
     els.productSearchMeta.textContent = products.length
@@ -333,7 +342,7 @@ async function submitForm(event) {
       customerGroups: [...document.querySelectorAll('input[name="customerGroups"]:checked')].map((input) => input.value),
       storeHref: els.store.value,
       employeeName: user?.name || '',
-      branchName: '',
+      branchName: els.store.dataset.branchName || '',
       items: items.map((item) => ({
         productName: item.name.trim(),
         code: item.code || '',
