@@ -65,6 +65,11 @@ const recentOrders = new Map();
 let telegramReceiptChatId = process.env.TELEGRAM_RECEIPT_CHAT_ID || '';
 const productStockCache = new Map();
 const productCostCache = new Map();
+const moySkladProductSearchCache = new Map();
+const moySkladPriceTypesCache = new Map();
+const moySkladPriceTypesInflight = new Map();
+const reconciliationDebtorsCache = new Map();
+let whatsappCustomersCache = { value: null, createdAt: 0 };
 const payrollReportCache = new Map();
 const salesReportCache = new Map();
 const salesReportInflight = new Map();
@@ -79,6 +84,13 @@ const PRICE_FORMULA_TEMPLATE_START = '[ORDO_PRICE_TEMPLATE]';
 const PRICE_FORMULA_TEMPLATE_END = '[/ORDO_PRICE_TEMPLATE]';
 const PAYROLL_CONFIG_START = '[ORDO_PAYROLL]';
 const PAYROLL_CONFIG_END = '[/ORDO_PAYROLL]';
+const PRODUCT_SEARCH_LIMIT = Math.max(6, Math.min(30, Number(process.env.MOYSKLAD_PRODUCT_SEARCH_LIMIT || 12)));
+const PRODUCT_SEARCH_CACHE_TTL_MS = 120_000;
+const PRODUCT_PRICE_TYPES_CACHE_TTL_MS = 600_000;
+const RECONCILIATION_CACHE_TTL_MS = 180_000;
+const RECONCILIATION_DOCUMENT_LIMIT = Math.max(200, Math.min(5000, Number(process.env.RECONCILIATION_DOCUMENT_LIMIT || 2000)));
+const WHATSAPP_CUSTOMERS_CACHE_TTL_MS = 300_000;
+const WHATSAPP_CUSTOMERS_LIMIT = Math.max(200, Math.min(5000, Number(process.env.WHATSAPP_CUSTOMERS_LIMIT || 2000)));
 const categorySaleBonusRules = [
   { name: 'Встраиваемые варочные панели', amount: 300, match: /встраиваем.*вароч|варочн.*панел/ },
   { name: 'Встраиваемые духовые шкафы', amount: 400, match: /встраиваем.*духов|духов.*шкаф/ },
@@ -231,6 +243,36 @@ const server = createServer(async (req, res) => {
         category: url.searchParams.get('category') || ''
       });
       sendJson(res, 200, { expenses });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/reconciliation/debtors') {
+      requireCrmPermission(req, 'reconciliation');
+      const report = await getReconciliationDebtors({
+        search: url.searchParams.get('search') || '',
+        customerType: url.searchParams.get('customerType') || '',
+        limit: url.searchParams.get('limit') || ''
+      });
+      sendJson(res, 200, report);
+      return;
+    }
+
+    const reconciliationDebtorMatch = url.pathname.match(/^\/api\/reconciliation\/debtors\/([0-9a-f-]{36})$/i);
+    if (reconciliationDebtorMatch && req.method === 'GET') {
+      requireCrmPermission(req, 'reconciliation');
+      const details = await getReconciliationDebtorDetails(reconciliationDebtorMatch[1]);
+      sendJson(res, 200, details);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/whatsapp/customers') {
+      requireCrmPermission(req, 'whatsappBroadcast');
+      const customers = await getWhatsappCustomers({
+        search: url.searchParams.get('search') || '',
+        customerType: url.searchParams.get('customerType') || '',
+        limit: url.searchParams.get('limit') || ''
+      });
+      sendJson(res, 200, customers);
       return;
     }
 
@@ -1878,14 +1920,130 @@ async function getMoySkladCustomers(search, input = {}) {
   }));
 }
 
+async function getWhatsappCustomers(input = {}) {
+  const search = normalizeTextSearch(input.search);
+  const customerType = String(input.customerType || '').trim();
+  const limit = Math.max(20, Math.min(1000, Number(input.limit) || 300));
+  const payload = whatsappCustomersCache.value && Date.now() - whatsappCustomersCache.createdAt < WHATSAPP_CUSTOMERS_CACHE_TTL_MS
+    ? whatsappCustomersCache.value
+    : await loadWhatsappCustomers();
+
+  if (payload !== whatsappCustomersCache.value) {
+    whatsappCustomersCache = { value: payload, createdAt: Date.now() };
+  }
+
+  const customers = payload.customers
+    .filter((customer) => {
+      if (customerType && customer.customerType !== customerType) return false;
+      if (!search) return true;
+      return normalizeTextSearch(`${customer.name} ${customer.phone} ${customer.whatsappPhone} ${customer.inn} ${customer.actualAddress}`).includes(search);
+    })
+    .slice(0, limit);
+
+  return {
+    loadedAt: payload.loadedAt,
+    total: payload.customers.length,
+    customers,
+    filters: { search: input.search || '', customerType, limit }
+  };
+}
+
+async function loadWhatsappCustomers() {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const rows = [];
+  let offset = 0;
+  const limit = 100;
+
+  while (offset < WHATSAPP_CUSTOMERS_LIMIT) {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      order: 'updated,desc'
+    });
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/counterparty?${params}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json;charset=utf-8'
+      }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw httpError(response.status, 'Не удалось загрузить базу клиентов из МойСклад.', data);
+
+    const pageRows = Array.isArray(data?.rows) ? data.rows : [];
+    rows.push(...pageRows);
+    if (pageRows.length < limit) break;
+    offset += limit;
+  }
+
+  const seen = new Set();
+  const customers = rows.flatMap((counterparty) => {
+    const type = normalizeCounterpartyType(counterparty);
+    return extractWhatsappPhones(counterparty.phone).map((phone) => ({
+      id: `${counterparty.id}:${phone.whatsappPhone}`,
+      customerId: counterparty.id,
+      href: counterparty.meta?.href || '',
+      name: counterparty.name || 'Без имени',
+      phone: phone.displayPhone,
+      whatsappPhone: phone.whatsappPhone,
+      customerType: type,
+      customerTypeLabel: type === 'legal' ? 'Юрлицо' : 'Физлицо',
+      inn: counterparty.inn || '',
+      actualAddress: counterparty.actualAddress || counterparty.legalAddress || '',
+      updated: counterparty.updated || counterparty.created || ''
+    }));
+  }).filter((customer) => {
+    const key = customer.whatsappPhone;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort((left, right) => String(left.name).localeCompare(String(right.name), 'ru'));
+
+  return { loadedAt: new Date().toISOString(), customers };
+}
+
+function extractWhatsappPhones(value) {
+  return String(value || '')
+    .split(/[,;/\n\r]+/)
+    .map((phone) => normalizeWhatsappPhone(phone))
+    .filter(Boolean);
+}
+
+function normalizeWhatsappPhone(value) {
+  const rawDigits = String(value || '').replace(/\D/g, '');
+  if (!rawDigits) return null;
+  let digits = rawDigits;
+  if (digits.length === 9) digits = `996${digits}`;
+  if (digits.length === 10 && digits.startsWith('0')) digits = `996${digits.slice(1)}`;
+  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
+  if (digits.length < 10 || digits.length > 15) return null;
+  return {
+    displayPhone: `+${digits}`,
+    whatsappPhone: digits
+  };
+}
+
 async function getMoySkladProducts(search, storeHref = '', input = {}) {
   const token = getMoySkladTokenFor(input);
-  const queries = getProductSearchQueries(search);
+  const normalizedSearch = String(search || '').trim();
+  const branchKey = getMoySkladBranchKey(input) || 'default';
+  const cacheKey = [
+    branchKey,
+    String(storeHref || '').trim(),
+    normalizedSearch.toLocaleLowerCase('ru-RU')
+  ].join('|');
+  const cached = moySkladProductSearchCache.get(cacheKey);
+  if (cached && Date.now() - cached.createdAt < PRODUCT_SEARCH_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  const queries = getProductSearchQueries(normalizedSearch);
   const allProducts = [];
   const seen = new Set();
 
-  for (const query of queries) {
-    const rows = await loadMoySkladProductRows(token, query);
+  const rowsByQuery = await Promise.all(queries.map((query) =>
+    loadMoySkladProductRows(token, query).catch(() => [])
+  ));
+  for (const rows of rowsByQuery) {
     for (const product of rows) {
       const href = product.meta?.href;
       if (!href || seen.has(href)) {
@@ -1896,17 +2054,19 @@ async function getMoySkladProducts(search, storeHref = '', input = {}) {
     }
   }
 
-  const selectedProducts = allProducts.slice(0, 30);
-  const currencies = await getMoySkladCurrencies(token).catch(() => []);
+  const selectedProducts = allProducts.slice(0, PRODUCT_SEARCH_LIMIT);
+  const [currencies, priceTypes] = await Promise.all([
+    getMoySkladCurrencies(token).catch(() => []),
+    getCachedMoySkladPriceTypes(token, branchKey).catch(() => [])
+  ]);
+  const priceType36 = findPreferredPriceType(priceTypes, process.env.MOYSKLAD_PRODUCT_PRICE_NAME || '3-6');
   const currenciesByHref = new Map(currencies.map((currency) => [currency.meta?.href, currency]));
-  const stockValues = storeHref
-    ? await mapWithConcurrency(selectedProducts, 6, (product) =>
-        getMoySkladProductStock(token, product.meta?.href || '', storeHref).catch(() => null))
-    : selectedProducts.map(() => null);
+  const stockValues = selectedProducts.map((product) => getCachedProductStockValue(storeHref, product.meta?.href || ''));
 
-  return selectedProducts.map((product, index) => {
+  const result = selectedProducts.map((product, index) => {
     const cost = getProductCost(product, currenciesByHref);
     const minPrice = getAccountingMinPrice(product, currenciesByHref);
+    const price36 = getAccountingSalePriceByName(product, currenciesByHref, process.env.MOYSKLAD_PRODUCT_PRICE_NAME || '3-6', priceType36);
     const wholesalePrice = getAccountingWholesalePrice(product, currenciesByHref);
     productCostCache.set(product.meta?.href || '', { value: cost, createdAt: Date.now() });
     return {
@@ -1916,7 +2076,8 @@ async function getMoySkladProducts(search, storeHref = '', input = {}) {
       article: product.article || '',
       externalCode: product.externalCode || '',
       barcode: getProductBarcode(product),
-      price: minPrice.value,
+      price: price36.value,
+      price36,
       minPrice,
       wholesalePrice,
       cost,
@@ -1925,6 +2086,9 @@ async function getMoySkladProducts(search, storeHref = '', input = {}) {
       type: product.meta.type
     };
   });
+  moySkladProductSearchCache.set(cacheKey, { value: result, createdAt: Date.now() });
+  trimMap(moySkladProductSearchCache, 200);
+  return result;
 }
 
 async function hydrateOrderItemCosts(input) {
@@ -1991,6 +2155,19 @@ async function getMoySkladProductStock(token, productHref, storeHref) {
   const value = Number.isFinite(rawStock) ? rawStock : 0;
   productStockCache.set(cacheKey, { value, createdAt: Date.now() });
   return value;
+}
+
+function getCachedProductStockValue(storeHref, productHref) {
+  if (!storeHref || !productHref) return null;
+  const cached = productStockCache.get(`${storeHref}|${productHref}`);
+  if (!cached || Date.now() - cached.createdAt > 300_000) return null;
+  return cached.value;
+}
+
+function trimMap(map, maxSize) {
+  while (map.size > maxSize) {
+    map.delete(map.keys().next().value);
+  }
 }
 
 async function getAccountingPriceCatalog(options = {}) {
@@ -2181,6 +2358,25 @@ function getAccountingWholesalePrice(product, currenciesByHref) {
     currencyName: 'KGS',
     currencyIsoCode: 'KGS',
     currencyHref: wholesale?.currency?.meta?.href || ''
+  };
+}
+
+function getAccountingSalePriceByName(product, currenciesByHref, preferredName, preferredPriceType = null) {
+  const salePrices = Array.isArray(product.salePrices) ? product.salePrices : [];
+  const salePrice = preferredPriceType?.href
+    ? salePrices.find((price) => price.priceType?.meta?.href === preferredPriceType.href)
+    : findPreferredProductSalePrice(salePrices, preferredName);
+  const currency = resolveAccountingCurrency(salePrice?.currency, currenciesByHref);
+  const rawValue = Number(salePrice?.value || 0);
+  const value = Number.isFinite(rawValue)
+    ? (isUsdCurrency(currency) ? rawValue / 100 * getReportUsdCostRate(1) : rawValue / 100)
+    : 0;
+  return {
+    value: Number.isFinite(value) ? roundMoney(value) : 0,
+    currencyName: isUsdCurrency(currency) ? 'KGS' : (currency.name || currency.fullName || ''),
+    currencyIsoCode: isUsdCurrency(currency) ? 'KGS' : (currency.isoCode || ''),
+    currencyHref: salePrice?.currency?.meta?.href || '',
+    priceTypeName: preferredPriceType?.name || salePrice?.priceType?.name || ''
   };
 }
 
@@ -2397,6 +2593,26 @@ async function getMoySkladPriceTypes(token) {
     name: priceType.name,
     href: priceType.meta?.href || ''
   })).filter((priceType) => priceType.href);
+}
+
+async function getCachedMoySkladPriceTypes(token, cacheKey = 'default') {
+  const key = String(cacheKey || 'default');
+  const cached = moySkladPriceTypesCache.get(key);
+  if (cached && Date.now() - cached.createdAt < PRODUCT_PRICE_TYPES_CACHE_TTL_MS) {
+    return cached.value;
+  }
+  const inflight = moySkladPriceTypesInflight.get(key);
+  if (inflight) return inflight;
+
+  const promise = getMoySkladPriceTypes(token).then((value) => {
+    moySkladPriceTypesCache.set(key, { value, createdAt: Date.now() });
+    trimMap(moySkladPriceTypesCache, 10);
+    return value;
+  }).finally(() => {
+    moySkladPriceTypesInflight.delete(key);
+  });
+  moySkladPriceTypesInflight.set(key, promise);
+  return promise;
 }
 
 async function updateAccountingPrices(input) {
@@ -2694,7 +2910,7 @@ function getProductSearchQueries(search) {
 }
 
 async function loadMoySkladProductRows(token, search) {
-  const params = new URLSearchParams({ limit: '30' });
+  const params = new URLSearchParams({ limit: String(PRODUCT_SEARCH_LIMIT) });
   if (search) {
     params.set('search', search);
   }
@@ -2743,6 +2959,19 @@ function findPreferredProductSalePrice(salePrices, preferredName) {
   return normalizedPrices.find((item) => item.name && item.name === preferred)?.price
     || normalizedPrices.find((item) => item.name && (item.name.includes(preferred) || preferred.includes(item.name)))?.price
     || normalizedPrices.find((item) => item.name.includes('3-6') || item.name.includes('3 6'))?.price
+    || null;
+}
+
+function findPreferredPriceType(priceTypes, preferredName) {
+  const preferred = normalizePriceTypeName(preferredName);
+  const normalizedTypes = (Array.isArray(priceTypes) ? priceTypes : []).map((priceType) => ({
+    priceType,
+    name: normalizePriceTypeName(priceType.name || '')
+  }));
+
+  return normalizedTypes.find((item) => item.name && item.name === preferred)?.priceType
+    || normalizedTypes.find((item) => item.name && (item.name.includes(preferred) || preferred.includes(item.name)))?.priceType
+    || normalizedTypes.find((item) => item.name.includes('3-6') || item.name.includes('3 6'))?.priceType
     || null;
 }
 
@@ -2959,6 +3188,378 @@ async function getBankCommissionAnalytics(input) {
     rows,
     payments: allPayments
   };
+}
+
+async function getReconciliationDebtors(input = {}) {
+  const limit = Math.max(20, Math.min(500, Number(input.limit) || 200));
+  const search = normalizeTextSearch(input.search);
+  const customerType = String(input.customerType || '').trim();
+  const cacheKey = 'all-debtors';
+  const cached = reconciliationDebtorsCache.get(cacheKey);
+  let payload = cached && Date.now() - cached.createdAt < RECONCILIATION_CACHE_TTL_MS ? cached.value : null;
+  if (!payload) {
+    payload = await loadReconciliationDebtors();
+    reconciliationDebtorsCache.set(cacheKey, { value: payload, createdAt: Date.now() });
+  }
+
+  const debtors = payload.debtors
+    .filter((debtor) => {
+      if (customerType && debtor.customerType !== customerType) return false;
+      if (!search) return true;
+      return normalizeTextSearch(`${debtor.name} ${debtor.phone} ${debtor.inn}`).includes(search);
+    })
+    .slice(0, limit);
+
+  return { ...payload, debtors, filters: { search: input.search || '', customerType, limit } };
+}
+
+async function loadReconciliationDebtors() {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const [retailRows, demandRows] = await Promise.all([
+    loadReconciliationDocuments(token, 'retaildemand'),
+    loadReconciliationDocuments(token, 'demand')
+  ]);
+  const rawDocuments = [...retailRows, ...demandRows]
+    .map(mapReconciliationDocument)
+    .filter((document) => document.customerHref && document.debt > 0);
+  const agentHrefs = [...new Set(rawDocuments.map((document) => document.customerHref))];
+  const documentsByAgent = new Map();
+  for (const document of rawDocuments) {
+    const list = documentsByAgent.get(document.customerHref) || [];
+    list.push(document);
+    documentsByAgent.set(document.customerHref, list);
+  }
+  const adjustedDocumentGroups = await mapWithConcurrency(agentHrefs, 4, async (agentHref) => {
+    const payments = await loadReconciliationPayments(token, agentHref, { limit: 100, maxRows: 500 }).catch(() => []);
+    return applyReconciliationPayments(documentsByAgent.get(agentHref) || [], payments);
+  });
+  const documents = adjustedDocumentGroups.flat();
+  const debtorsByHref = new Map();
+
+  for (const document of documents) {
+    const existing = debtorsByHref.get(document.customerHref) || {
+      id: document.customerId,
+      href: document.customerHref,
+      name: document.customerName || 'Без имени',
+      customerType: document.customerType,
+      customerTypeLabel: document.customerTypeLabel,
+      phone: document.customerPhone,
+      inn: document.customerInn,
+      actualAddress: document.customerAddress,
+      debt: 0,
+      amount: 0,
+      paid: 0,
+      documentCount: 0,
+      lastMoment: '',
+      lastDocumentName: ''
+    };
+    existing.debt = roundMoney(existing.debt + document.debt);
+    existing.amount = roundMoney(existing.amount + document.amount);
+    existing.paid = roundMoney(existing.paid + document.paid);
+    existing.documentCount += 1;
+    if (!existing.lastMoment || new Date(document.moment) > new Date(existing.lastMoment)) {
+      existing.lastMoment = document.moment;
+      existing.lastDocumentName = document.name;
+    }
+    debtorsByHref.set(document.customerHref, existing);
+  }
+
+  const debtors = [...debtorsByHref.values()]
+    .sort((left, right) => right.debt - left.debt || String(left.name).localeCompare(String(right.name), 'ru'));
+  const totals = debtors.reduce((sum, debtor) => ({
+    debt: roundMoney(sum.debt + debtor.debt),
+    amount: roundMoney(sum.amount + debtor.amount),
+    paid: roundMoney(sum.paid + debtor.paid),
+    debtors: sum.debtors + 1,
+    documents: sum.documents + debtor.documentCount
+  }), { debt: 0, amount: 0, paid: 0, debtors: 0, documents: 0 });
+
+  return {
+    loadedAt: new Date().toISOString(),
+    truncated: retailRows.length >= RECONCILIATION_DOCUMENT_LIMIT || demandRows.length >= RECONCILIATION_DOCUMENT_LIMIT,
+    totals,
+    debtors
+  };
+}
+
+async function getReconciliationDebtorDetails(counterpartyId) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const agentHref = `${MOYSKLAD_BASE_URL}/entity/counterparty/${encodeURIComponent(counterpartyId)}`;
+  const [retailRows, demandRows, payments] = await Promise.all([
+    loadReconciliationDocuments(token, 'retaildemand', { agentHref, limit: 100, maxRows: 500 }),
+    loadReconciliationDocuments(token, 'demand', { agentHref, limit: 100, maxRows: 500 }),
+    loadReconciliationPayments(token, agentHref).catch(() => [])
+  ]);
+  const documentsBeforePayments = [...retailRows, ...demandRows]
+    .map(mapReconciliationDocument)
+    .filter((document) => document.customerHref && document.debt > 0)
+    .sort((left, right) => new Date(right.moment) - new Date(left.moment));
+  const documents = applyReconciliationPayments(documentsBeforePayments, payments);
+  const act = buildReconciliationAct(documentsBeforePayments, payments, documentsBeforePayments[0]?.customerName || 'Контрагент');
+  const debtorSource = documents[0] || documentsBeforePayments[0];
+  const debtor = debtorSource
+    ? {
+        id: debtorSource.customerId,
+        href: debtorSource.customerHref,
+        name: debtorSource.customerName,
+        customerType: debtorSource.customerType,
+        customerTypeLabel: debtorSource.customerTypeLabel,
+        phone: debtorSource.customerPhone,
+        inn: debtorSource.customerInn,
+        actualAddress: debtorSource.customerAddress
+      }
+    : { id: counterpartyId, href: agentHref, name: 'Должник', customerType: '', customerTypeLabel: 'Контрагент' };
+  const totals = documents.reduce((sum, document) => ({
+    debt: roundMoney(sum.debt + document.debt),
+    amount: roundMoney(sum.amount + document.amount),
+    paid: roundMoney(sum.paid + document.paid),
+    documents: sum.documents + 1
+  }), { debt: 0, amount: 0, paid: 0, documents: 0 });
+
+  return { debtor, totals, documents, payments: payments.slice(0, 100), act };
+}
+
+async function loadReconciliationDocuments(token, documentType, options = {}) {
+  const rows = [];
+  let offset = 0;
+  const limit = Math.min(100, Math.max(1, Number(options.limit) || 100));
+  const maxRows = Math.min(RECONCILIATION_DOCUMENT_LIMIT, Math.max(limit, Number(options.maxRows) || RECONCILIATION_DOCUMENT_LIMIT));
+
+  while (offset < maxRows) {
+    const filters = [];
+    if (options.agentHref) filters.push(`agent=${options.agentHref}`);
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      order: 'moment,desc',
+      expand: 'agent,organization,store,retailStore,rate.currency'
+    });
+    if (filters.length) params.set('filter', filters.join(';'));
+
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/${documentType}?${params}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw httpError(response.status, `Не удалось загрузить долги ${getDocumentTypeLabel(documentType).toLowerCase()} из МойСклад.`, data);
+    }
+    const pageRows = Array.isArray(data?.rows) ? data.rows : [];
+    rows.push(...pageRows.map((row) => ({ ...row, reportDocumentType: documentType })));
+    if (pageRows.length < limit) break;
+    offset += limit;
+  }
+
+  return rows;
+}
+
+async function loadReconciliationPayments(token, agentHref = '', options = {}) {
+  const rows = [];
+  let offset = 0;
+  const limit = Math.min(100, Math.max(1, Number(options.limit) || 100));
+  const maxRows = Math.min(RECONCILIATION_DOCUMENT_LIMIT, Math.max(limit, Number(options.maxRows) || limit));
+
+  while (offset < maxRows) {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      order: 'moment,desc',
+      expand: 'agent,organization,operations'
+    });
+    if (agentHref) params.set('filter', `agent=${agentHref}`);
+
+    const response = await moySkladFetch(`${MOYSKLAD_BASE_URL}/entity/paymentin?${params}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json;charset=utf-8' }
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) throw httpError(response.status, 'Не удалось загрузить оплаты должника из МойСклад.', data);
+
+    const pageRows = Array.isArray(data?.rows) ? data.rows : [];
+    rows.push(...pageRows.map(mapReconciliationPayment));
+    if (pageRows.length < limit) break;
+    offset += limit;
+  }
+
+  return rows;
+}
+
+function mapReconciliationPayment(payment) {
+  return {
+    id: payment.id,
+    name: payment.name || '',
+    moment: payment.moment || payment.created || '',
+    amount: fromMoySkladPrice(payment.sum),
+    organizationName: payment.organization?.name || '',
+    agentHref: payment.agent?.meta?.href || '',
+    description: payment.description || '',
+    operationIds: getPaymentOperationIds(payment),
+    operationNames: getPaymentOperationNames(payment),
+    webUrl: getMoySkladWebUrl('paymentin', payment.id)
+  };
+}
+
+function applyReconciliationPayments(documents, payments) {
+  const result = documents
+    .map((document) => ({
+      ...document,
+      appliedPayments: [],
+      originalDebt: document.debt
+    }))
+    .sort((left, right) => new Date(left.moment) - new Date(right.moment));
+
+  for (const payment of payments) {
+    let remaining = roundMoney(payment.amount || 0);
+    if (remaining <= 0) continue;
+
+    for (const document of result.filter((item) => item.debt > 0)) {
+      remaining = applyPaymentToReconciliationDocument(document, payment, remaining);
+      if (remaining <= 0) break;
+    }
+  }
+
+  return result
+    .filter((document) => document.debt > 0)
+    .sort((left, right) => new Date(right.moment) - new Date(left.moment));
+}
+
+function applyPaymentToReconciliationDocument(document, payment, remaining) {
+  const applied = roundMoney(Math.min(document.debt, remaining));
+  if (applied <= 0) return remaining;
+  document.debt = roundMoney(document.debt - applied);
+  document.paid = roundMoney(document.paid + applied);
+  document.appliedPayments.push({
+    id: payment.id,
+    name: payment.name,
+    amount: applied,
+    moment: payment.moment
+  });
+  return roundMoney(remaining - applied);
+}
+
+function buildReconciliationAct(documents, payments, customerName) {
+  const documentRows = documents.map((document) => ({
+    id: `doc:${document.type}:${document.id}`,
+    moment: document.moment,
+    operation: `${document.typeLabel} (${formatActDateShort(document.moment)}, № ${document.name || ''})`,
+    debit: roundMoney(document.amount || 0),
+    credit: 0
+  }));
+  const paymentRows = payments.map((payment) => ({
+    id: `payment:${payment.id}`,
+    moment: payment.moment,
+    operation: `Входящий платёж (${formatActDateShort(payment.moment)}, № ${payment.name || ''})`,
+    debit: 0,
+    credit: roundMoney(payment.amount || 0)
+  }));
+  const rows = [...documentRows, ...paymentRows]
+    .sort((left, right) => new Date(left.moment) - new Date(right.moment));
+  const totals = rows.reduce((sum, row) => ({
+    debit: roundMoney(sum.debit + row.debit),
+    credit: roundMoney(sum.credit + row.credit)
+  }), { debit: 0, credit: 0 });
+  const saldo = roundMoney(totals.debit - totals.credit);
+  const lastMoment = rows[rows.length - 1]?.moment || new Date().toISOString();
+
+  return {
+    customerName,
+    date: formatActDateShort(lastMoment),
+    rows,
+    totals: {
+      ...totals,
+      saldo
+    }
+  };
+}
+
+function formatActDateShort(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit'
+  }).format(date);
+}
+
+function getPaymentOperationIds(payment) {
+  return getPaymentOperationEntries(payment)
+    .map((operation) => getIdFromHref(operation.meta?.href || operation.href || ''))
+    .filter(Boolean);
+}
+
+function getPaymentOperationNames(payment) {
+  return getPaymentOperationEntries(payment)
+    .map((operation) => operation.name || operation.meta?.name || '')
+    .filter(Boolean);
+}
+
+function getPaymentOperationEntries(payment) {
+  if (Array.isArray(payment.operations)) return payment.operations;
+  if (Array.isArray(payment.operations?.rows)) return payment.operations.rows;
+  return [];
+}
+
+function normalizeDocumentNumber(value) {
+  const text = String(value || '').trim().toLowerCase();
+  const digits = text.match(/\d+/g)?.join('') || '';
+  if (!digits) return text;
+  return digits.replace(/^0+/, '') || '0';
+}
+
+function mapReconciliationDocument(document) {
+  const documentType = document.reportDocumentType || document.meta?.type || '';
+  const rate = getReportDocumentMoneyRate(document);
+  const amount = fromReportDocumentMoney(document.sum, rate);
+  const paidAttribute = getReportNumberAttribute(document, 'PAID', documentType);
+  const unpaidAttribute = getReportNumberAttribute(document, 'UNPAID', documentType);
+  const linkedPaid = fromReportDocumentMoney(document.payedSum, rate);
+  const paid = documentType === 'retaildemand'
+    ? paidAttribute !== null
+      ? roundMoney(paidAttribute * rate)
+      : roundMoney(fromReportDocumentMoney(document.cashSum, rate) + fromReportDocumentMoney(document.noCashSum, rate))
+    : roundMoney(Math.max(linkedPaid, paidAttribute !== null ? paidAttribute * rate : 0));
+  const debt = unpaidAttribute !== null
+    ? roundMoney(Math.max(0, unpaidAttribute * rate))
+    : roundMoney(Math.max(0, amount - paid));
+  const agent = document.agent || {};
+  const agentHref = agent.meta?.href || '';
+  return {
+    id: document.id,
+    name: document.name || '',
+    type: documentType,
+    typeLabel: getDocumentTypeLabel(documentType),
+    moment: document.moment || document.created || '',
+    organizationName: document.organization?.name || '',
+    storeName: document.retailStore?.name || document.store?.name || '',
+    amount,
+    paid,
+    debt,
+    paymentType: getReportPaymentType(document, documentType),
+    comment: document.description || '',
+    customerId: agent.id || getIdFromHref(agentHref),
+    customerHref: agentHref,
+    customerName: agent.name || '',
+    customerType: normalizeCounterpartyType(agent),
+    customerTypeLabel: getCounterpartyTypeLabel(agent),
+    customerPhone: agent.phone || '',
+    customerInn: agent.inn || '',
+    customerAddress: agent.actualAddress || agent.legalAddress || '',
+    webUrl: getMoySkladWebUrl(documentType, document.id)
+  };
+}
+
+function normalizeCounterpartyType(counterparty) {
+  const value = String(counterparty?.companyType || counterparty?.legalTitle || '').toLowerCase();
+  if (value.includes('individual') || value.includes('person') || value.includes('физ')) return 'individual';
+  if (value.includes('legal') || value.includes('company') || value.includes('юр')) return 'legal';
+  return counterparty?.inn ? 'legal' : 'individual';
+}
+
+function getCounterpartyTypeLabel(counterparty) {
+  return normalizeCounterpartyType(counterparty) === 'legal' ? 'Юрлицо' : 'Физлицо';
+}
+
+function normalizeTextSearch(value) {
+  return String(value || '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ');
 }
 
 async function loadSalesReport(input) {
@@ -5145,14 +5746,14 @@ function setReportSession(res, login) {
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
 }
 
-const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'priceFormula', 'customsCalculator', 'bankCommissions', 'audit', 'users', 'about'];
+const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'reconciliation', 'whatsappBroadcast', 'priceFormula', 'customsCalculator', 'bankCommissions', 'audit', 'users', 'about'];
 const crmRolePermissions = {
   admin: [...crmPermissionNames],
   owner: [...crmPermissionNames],
-  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'customsCalculator', 'bankCommissions', 'about'],
+  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'reconciliation', 'whatsappBroadcast', 'customsCalculator', 'bankCommissions', 'about'],
   seller: ['sales', 'debtSale', 'deliveries', 'reports', 'commercialDocuments', 'about'],
   logistics: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about'],
-  accountant: ['reports', 'expenses', 'payroll', 'priceFormula', 'customsCalculator', 'bankCommissions', 'about'],
+  accountant: ['reports', 'expenses', 'payroll', 'reconciliation', 'priceFormula', 'customsCalculator', 'bankCommissions', 'about'],
   employee: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about']
 };
 

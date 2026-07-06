@@ -25,6 +25,8 @@ const permissions = {
   expenses: 'Расходы',
   payroll: 'Зарплаты',
   commercialDocuments: 'Счета юрлицам',
+  reconciliation: 'Акт сверки',
+  whatsappBroadcast: 'WhatsApp рассылка',
   priceFormula: 'Расчет цен',
   customsCalculator: 'Калькулятор таможни',
   audit: 'Журнал действий',

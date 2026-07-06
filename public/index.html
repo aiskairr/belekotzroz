@@ -11,7 +11,7 @@
       <form id="crmLoginForm" class="crm-login-card">
         <div class="crm-login-cover">
           <div class="crm-login-brand">
-            <img src="/ordo-logo-light.svg" alt="Ordo CRM">
+            <img src="/ordo-logo-light.svg?v=20260702-sidebar-colors" alt="Ordo CRM">
             <div><strong>Ordo CRM</strong><small>Продажи, учет и автоматизация</small></div>
           </div>
           <div class="crm-login-copy">
@@ -62,7 +62,7 @@
 
     <aside id="crmSidebar" class="crm-sidebar hidden">
       <div class="crm-brand">
-        <img class="crm-brand-logo" src="/ordo-logo-light.svg" alt="Ordo CRM">
+        <img class="crm-brand-logo" src="/ordo-logo-light.svg?v=20260702-sidebar-colors" alt="Ordo CRM">
       </div>
       <nav class="crm-nav" aria-label="Основная навигация">
         <a id="salesNavLink" class="active" href="/sales.html" data-permission="sales">Продажи</a>
@@ -73,6 +73,8 @@
         <a href="/expenses.html" data-permission="expenses">Расходы</a>
         <a href="/payroll.html" data-permission="payroll">Зарплаты</a>
         <a href="/commercial-documents.html" data-permission="commercialDocuments">Счета юрлицам</a>
+        <a href="/reconciliation.html" data-permission="reconciliation">Акт сверки</a>
+        <a href="/whatsapp-broadcast.html" data-permission="whatsappBroadcast">WhatsApp рассылка</a>
         <a href="/price-formula.html" data-permission="priceFormula">Расчет цен</a>
         <a href="/customs-calculator.html" data-permission="customsCalculator">Калькулятор таможни</a>
         <a href="/audit.html" data-permission="audit">Журнал действий</a>
@@ -396,6 +398,7 @@
         </div>
         <div class="modal-actions">
           <button id="printDocumentButton" type="button">Распечатать</button>
+          <button id="printPkoButton" class="secondary-button hidden" type="button">Распечатать ПКО</button>
           <button id="retryFiscalizationButton" class="secondary-button hidden" type="button">Фискализация</button>
           <button id="openMoyskladButton" class="secondary-button" type="button">Открыть в МойСклад</button>
           <button id="closeSuccessModalButton" class="secondary-button" type="button">Закрыть</button>
@@ -461,6 +464,6 @@
 
     <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
-    <script src="/app.js?v=20260627-mobile-gallery" type="module"></script>
+    <script src="/app.js?v=20260702-pko-cash" type="module"></script>
   </body>
 </html>

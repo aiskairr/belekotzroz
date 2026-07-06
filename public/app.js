@@ -29,6 +29,7 @@ const fiscalStatusText = document.querySelector('#fiscalStatusText');
 const fiscalStatusChecklist = document.querySelector('#fiscalStatusChecklist');
 const retryFiscalizationButton = document.querySelector('#retryFiscalizationButton');
 const printDocumentButton = document.querySelector('#printDocumentButton');
+const printPkoButton = document.querySelector('#printPkoButton');
 const openMoyskladButton = document.querySelector('#openMoyskladButton');
 const closeSuccessModalButton = document.querySelector('#closeSuccessModalButton');
 const printReceipt = document.querySelector('#printReceipt');
@@ -565,6 +566,13 @@ printDocumentButton.addEventListener('click', () => {
   window.print();
 });
 
+printPkoButton?.addEventListener('click', () => {
+  if (!lastCreatedOrder) {
+    return;
+  }
+  printPko(lastCreatedOrder);
+});
+
 openMoyskladButton.addEventListener('click', () => {
   const url = getMoySkladWebUrl(lastCreatedOrder?.document);
   if (url) {
@@ -837,7 +845,7 @@ function renderProductResults(message = '') {
     if (product.code) {
       parts.push(`Код: ${product.code}`);
     }
-    parts.push(formatSom(product.price || 0));
+    parts.push(`Цена 3-6: ${formatSom(product.price || 0)}`);
     if (Number.isFinite(Number(product.stock))) {
       const stock = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(product.stock));
       parts.push(`Остаток в ${branches[selectedBranch] || getSelectedStore()?.name || 'складе'}: ${stock} шт`);
@@ -2418,6 +2426,7 @@ function getDocumentTitle(type) {
 function showSuccessModal(data, message) {
   successMessage.textContent = message;
   openMoyskladButton.disabled = !getMoySkladWebUrl(data.document);
+  printPkoButton?.classList.toggle('hidden', !isPkoAvailable(data));
   successModal.classList.remove('hidden');
   renderPrintReceipt(data);
   renderFiscalStatus(data);
@@ -2611,6 +2620,159 @@ function renderPrintReceipt(data) {
   `;
 }
 
+function isPkoAvailable(data) {
+  const payload = data?.requestPayload || {};
+  const calculation = data?.calculation || {};
+  const scenario = String(payload.paymentScenario || '').toLowerCase();
+  const paymentName = String(calculation.paymentLabel || calculation.paymentType || payload.paymentTypeName || '').toLowerCase();
+  const amount = getPkoAmount(data);
+  return amount > 0 && (scenario === 'cash' || paymentName.includes('налич') || paymentName.includes('cash'));
+}
+
+function getPkoAmount(data) {
+  const calculation = data?.calculation || {};
+  const payload = data?.requestPayload || {};
+  if (String(payload.paymentScenario || '').toLowerCase() === 'mixed') {
+    return roundMoney(Number(calculation.cashPrepayment || payload.cashPrepayment || 0));
+  }
+  return roundMoney(Number(calculation.finalTotal || calculation.baseTotal || 0));
+}
+
+function printPko(data) {
+  const html = buildPkoHtml(data);
+  const printWindow = window.open('', '_blank', 'width=900,height=900');
+  if (!printWindow) {
+    setStatus('Браузер заблокировал окно печати ПКО. Разрешите всплывающие окна.', 'error');
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.setTimeout(() => {
+    printWindow.print();
+  }, 250);
+}
+
+function buildPkoHtml(data) {
+  const calculation = data?.calculation || {};
+  const document = data?.document || {};
+  const payload = data?.requestPayload || {};
+  const amount = getPkoAmount(data);
+  const date = new Date(document.moment || Date.now());
+  const dateParts = new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric'
+  }).formatToParts(date);
+  const day = dateParts.find((part) => part.type === 'day')?.value || '';
+  const month = dateParts.find((part) => part.type === 'month')?.value || '';
+  const year = dateParts.find((part) => part.type === 'year')?.value || '';
+  const buyer = getPrintBuyer(payload);
+  const cashier = payload.employeeName || '';
+  const organization = 'ИП Матаев Женишбек Камилович';
+  const branchName = payload.branchName || payload.retailStoreName || '';
+  const orderNumber = document.name || '';
+  const amountNumeric = formatReceiptMoney(amount);
+  const amountWords = numberToRussianSom(amount);
+  const basis = `Оплата за товар${orderNumber ? ` по документу № ${orderNumber}` : ''}`;
+
+  return `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>ПКО ${escapeHtml(orderNumber || '')}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f1f5f9; color: #111827; font-family: Arial, sans-serif; }
+    .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 12mm; }
+    .pko { border: 1px solid #111827; padding: 8mm; min-height: 132mm; }
+    .pko-top { display: flex; justify-content: space-between; gap: 20px; font-size: 11px; }
+    .pko-form-code { text-align: right; line-height: 1.35; color: #334155; }
+    .org { margin-top: 18px; text-align: center; font-size: 14px; font-weight: 700; border-bottom: 1px solid #111827; padding-bottom: 5px; }
+    .caption { text-align: center; font-size: 10px; color: #64748b; margin-top: 2px; }
+    h1 { margin: 24px 0 12px; text-align: center; font-size: 18px; letter-spacing: .02em; }
+    table { width: 100%; border-collapse: collapse; }
+    .meta th, .meta td { border: 1px solid #111827; padding: 6px 8px; font-size: 12px; text-align: center; }
+    .meta th { font-weight: 700; background: #f8fafc; }
+    .line { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 8px; align-items: end; margin-top: 13px; font-size: 13px; }
+    .value { min-height: 22px; border-bottom: 1px solid #111827; padding: 0 4px 3px; font-weight: 700; }
+    .amount-row { display: grid; grid-template-columns: 140px 1fr 120px; gap: 8px; align-items: end; margin-top: 13px; font-size: 13px; }
+    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; font-size: 12px; }
+    .signature-line { border-bottom: 1px solid #111827; height: 28px; margin-top: 10px; }
+    .receipt { margin-top: 10mm; border: 1px dashed #111827; padding: 8mm; }
+    .receipt h2 { text-align: center; margin: 0 0 16px; font-size: 16px; }
+    .receipt .line { grid-template-columns: 110px minmax(0, 1fr); }
+    @media print {
+      body { background: #fff; }
+      .page { width: auto; min-height: auto; margin: 0; padding: 8mm; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="pko">
+      <div class="pko-top">
+        <div></div>
+        <div class="pko-form-code">
+          Унифицированная форма № КО-1<br>
+          Утверждена постановлением Госкомстата России от 18.08.98 №88
+        </div>
+      </div>
+      <div class="org">${escapeHtml(organization)}</div>
+      <div class="caption">организация${branchName ? `, ${escapeHtml(branchName)}` : ''}</div>
+
+      <h1>ПРИХОДНЫЙ КАССОВЫЙ ОРДЕР</h1>
+      <table class="meta">
+        <thead>
+          <tr>
+            <th>Номер документа</th>
+            <th>Дата составления</th>
+            <th>Сумма, сом</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>${escapeHtml(orderNumber || '-')}</td>
+            <td>${escapeHtml(formatDateOnly(date))}</td>
+            <td>${escapeHtml(amountNumeric)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="line"><span>Принято от</span><div class="value">${escapeHtml(buyer)}</div></div>
+      <div class="line"><span>Основание</span><div class="value">${escapeHtml(basis)}</div></div>
+      <div class="amount-row"><span>Сумма</span><div class="value">${escapeHtml(amountWords)}</div><div class="value">${escapeHtml(amountNumeric)}</div></div>
+      <div class="line"><span>В том числе</span><div class="value">Без НДС</div></div>
+      <div class="signatures">
+        <div>
+          Главный бухгалтер
+          <div class="signature-line"></div>
+          <div class="caption">подпись / расшифровка</div>
+        </div>
+        <div>
+          Кассир${cashier ? `: ${escapeHtml(cashier)}` : ''}
+          <div class="signature-line"></div>
+          <div class="caption">подпись / расшифровка</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="receipt">
+      <h2>КВИТАНЦИЯ</h2>
+      <div class="org">${escapeHtml(organization)}</div>
+      <div class="line"><span>К ПКО №</span><div class="value">${escapeHtml(orderNumber || '-')}</div></div>
+      <div class="line"><span>от</span><div class="value">"${escapeHtml(day)}" ${escapeHtml(month)} ${escapeHtml(year)} г.</div></div>
+      <div class="line"><span>Принято от</span><div class="value">${escapeHtml(buyer)}</div></div>
+      <div class="line"><span>Основание</span><div class="value">${escapeHtml(basis)}</div></div>
+      <div class="line"><span>Сумма</span><div class="value">${escapeHtml(amountWords)}</div></div>
+      <div class="line"><span>Кассир</span><div class="value">${escapeHtml(cashier || '')}</div></div>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
 function getPrintBuyer(payload) {
   if (payload.customerMode === 'retail') {
     return 'Розничный покупатель';
@@ -2630,11 +2792,23 @@ function formatReceiptDate(value) {
   }).format(new Date(value));
 }
 
+function formatDateOnly(value) {
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(new Date(value));
+}
+
 function formatReceiptMoney(value) {
   return new Intl.NumberFormat('ru-RU', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   }).format(Number(value || 0));
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
 function escapeHtml(value) {

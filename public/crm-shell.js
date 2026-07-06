@@ -17,6 +17,8 @@ const navigation = [
   { id: 'expenses', href: '/expenses.html', label: 'Расходы', permission: 'expenses' },
   { id: 'payroll', href: '/payroll.html', label: 'Зарплаты', permission: 'payroll' },
   { id: 'commercialDocuments', href: '/commercial-documents.html', label: 'Счета юрлицам', permission: 'commercialDocuments' },
+  { id: 'reconciliation', href: '/reconciliation.html', label: 'Акт сверки', permission: 'reconciliation' },
+  { id: 'whatsappBroadcast', href: '/whatsapp-broadcast.html', label: 'WhatsApp рассылка', permission: 'whatsappBroadcast' },
   { id: 'priceFormula', href: '/price-formula.html', label: 'Расчет цен', permission: 'priceFormula' },
   { id: 'customsCalculator', href: '/customs-calculator.html', label: 'Калькулятор таможни', permission: 'customsCalculator' },
   { id: 'audit', href: '/audit.html', label: 'Журнал действий', permission: 'audit' },
@@ -67,7 +69,7 @@ function renderShell(user, page) {
   document.body.insertAdjacentHTML('afterbegin', `
     <aside class="shared-crm-sidebar">
       <button id="sharedCrmClose" class="shared-crm-close" type="button" aria-label="Закрыть меню">×</button>
-      <a class="shared-crm-brand" href="/sales.html"><img src="/ordo-logo-light.svg" alt="Ordo CRM"></a>
+      <a class="shared-crm-brand" href="/sales.html"><img src="/ordo-logo-light.svg?v=20260702-sidebar-colors" alt="Ordo CRM"></a>
       <nav>${links}</nav>
       <div class="shared-crm-sidebar-foot">
         <button id="sharedCrmSettings" class="shared-crm-settings" type="button">Настройки</button>

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WhatsApp рассылка | Ordo CRM</title>
+    <link rel="stylesheet" href="/crm-shell.css?v=20260629-bank-commissions">
+    <link rel="stylesheet" href="/whatsapp-broadcast.css?v=20260704-2">
+  </head>
+  <body>
+    <main id="whatsappApp" class="wa-app hidden">
+      <header class="wa-header">
+        <div>
+          <p class="eyebrow">Маркетинг</p>
+          <h1>WhatsApp рассылка</h1>
+          <p>Выберите клиентов из базы, добавьте текст и ссылки на новые видео. CRM подготовит сообщения для WhatsApp.</p>
+        </div>
+        <button id="refreshButton" type="button">Обновить базу</button>
+      </header>
+
+      <section class="wa-layout">
+        <article class="wa-panel wa-customers">
+          <div class="wa-panel-head">
+            <div><h2>Клиенты</h2><p id="customersStatus">Загрузка...</p></div>
+            <button id="selectVisibleButton" class="secondary" type="button">Выбрать видимых</button>
+          </div>
+          <form id="filtersForm" class="wa-filters">
+            <label><span>Поиск</span><input id="searchInput" type="search" placeholder="Имя, телефон, ИНН"></label>
+            <label><span>Тип</span><select id="customerTypeFilter"><option value="">Все</option><option value="individual">Физлица</option><option value="legal">Юрлица</option></select></label>
+          </form>
+          <div id="customersList" class="wa-customer-list"></div>
+        </article>
+
+        <article class="wa-panel wa-composer">
+          <div class="wa-panel-head">
+            <div><h2>Сообщение</h2><p>Подстановки: {name}, {phone}</p></div>
+          </div>
+          <label><span>Текст</span><textarea id="messageText" rows="7"></textarea></label>
+          <label><span>Ссылки на видео</span><textarea id="videoLinks" rows="5" placeholder="Одна ссылка на строку"></textarea></label>
+          <div class="wa-actions">
+            <button id="buildQueueButton" type="button">Сформировать очередь</button>
+            <button id="exportCsvButton" class="secondary" type="button">CSV</button>
+            <button id="clearSelectionButton" class="secondary" type="button">Очистить выбор</button>
+          </div>
+          <div class="wa-preview">
+            <h3>Предпросмотр</h3>
+            <pre id="messagePreview"></pre>
+          </div>
+        </article>
+      </section>
+
+      <section class="wa-panel wa-queue-panel">
+        <div class="wa-panel-head">
+          <div><h2>Очередь отправки</h2><p id="queueStatus">Выбрано 0 клиентов</p></div>
+          <div class="wa-queue-actions">
+            <label><span>Пачка</span><input id="batchSize" type="number" min="1" max="30" value="10"></label>
+            <button id="openBatchButton" class="secondary" type="button">Открыть пачку</button>
+            <button id="openNextButton" type="button">Открыть следующий</button>
+          </div>
+        </div>
+        <div id="queueList" class="wa-queue-list"></div>
+      </section>
+    </main>
+    <script src="/whatsapp-broadcast.js?v=20260704-2" type="module"></script>
+  </body>
+</html>

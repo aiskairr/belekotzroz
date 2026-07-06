@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Акт сверки | Ordo CRM</title>
+    <link rel="stylesheet" href="/crm-shell.css?v=20260629-bank-commissions">
+    <link rel="stylesheet" href="/reconciliation.css?v=20260705-act-1">
+  </head>
+  <body>
+    <main id="reconciliationApp" class="reconciliation-app hidden">
+      <header class="rc-header">
+        <div>
+          <p class="eyebrow">Взаиморасчеты</p>
+          <h1>Акт сверки</h1>
+          <p>Долги физических и юридических лиц из МойСклада. Детали должника открываются по клику.</p>
+        </div>
+        <button id="refreshButton" type="button">Обновить</button>
+      </header>
+
+      <form id="filtersForm" class="rc-filters">
+        <label>
+          <span>Поиск</span>
+          <input id="searchInput" type="search" placeholder="Имя, телефон или ИНН">
+        </label>
+        <label>
+          <span>Тип клиента</span>
+          <select id="customerTypeFilter">
+            <option value="">Все</option>
+            <option value="individual">Физлица</option>
+            <option value="legal">Юрлица</option>
+          </select>
+        </label>
+        <button type="submit">Показать</button>
+      </form>
+
+      <section class="rc-summary">
+        <article class="accent"><span>Общий долг</span><strong id="totalDebt">0,00 сом</strong></article>
+        <article><span>Должников</span><strong id="debtorCount">0</strong></article>
+        <article><span>Документов с долгом</span><strong id="documentCount">0</strong></article>
+        <article><span>Оплачено частично</span><strong id="totalPaid">0,00 сом</strong></article>
+      </section>
+
+      <section class="rc-panel">
+        <div class="rc-panel-head">
+          <div>
+            <h2>Список долгов</h2>
+            <p id="status">Загрузка...</p>
+          </div>
+          <span id="loadedAt"></span>
+        </div>
+        <div class="rc-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Должник</th>
+                <th>Тип</th>
+                <th>Телефон / ИНН</th>
+                <th>Последний документ</th>
+                <th class="num">Док.</th>
+                <th class="num">Оплачено</th>
+                <th class="num">Долг</th>
+              </tr>
+            </thead>
+            <tbody id="debtorRows">
+              <tr><td colspan="7" class="empty">Загрузка...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div id="debtorModal" class="rc-modal hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="rc-modal-card">
+        <header>
+          <div>
+            <p id="modalMeta">Должник</p>
+            <h2 id="modalTitle">Акт сверки</h2>
+          </div>
+          <div class="rc-modal-actions">
+            <button id="printButton" class="secondary" type="button">Печать</button>
+            <button id="closeModal" type="button" aria-label="Закрыть">×</button>
+          </div>
+        </header>
+        <div id="modalBody" class="rc-modal-body"></div>
+      </div>
+    </div>
+
+    <script src="/reconciliation.js?v=20260705-act-1" type="module"></script>
+  </body>
+</html>
