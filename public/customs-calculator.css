@@ -148,6 +148,11 @@ select:focus {
   height: 44px;
 }
 
+.customs-row-grid input[readonly] {
+  background: #f1f5f9;
+  color: #475569;
+}
+
 .customs-search-card,
 .customs-party-card,
 .customs-history-card,
@@ -179,6 +184,13 @@ select:focus {
 
 .customs-history-item small {
   color: #667085;
+}
+
+.customs-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .customs-party-grid {
@@ -220,7 +232,7 @@ select:focus {
 
 #productSummaryFooter {
   margin-top: 14px;
-  grid-template-columns: repeat(1, minmax(0, 280px));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .customs-product-summary table {
@@ -547,11 +559,25 @@ body[data-mode="dark"] input::placeholder {
   .customs-row-grid,
   .customs-row-summary,
   .customs-party-stats,
+  .customs-history-item,
   .customs-search-result {
     grid-template-columns: 1fr;
   }
 
+  .customs-history-actions {
+    justify-content: stretch;
+  }
+
+  .customs-history-actions button {
+    flex: 1 1 140px;
+  }
+
   .page-header {
+    flex-direction: column;
+  }
+
+  .section-heading {
+    align-items: stretch;
     flex-direction: column;
   }
 

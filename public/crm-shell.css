@@ -23,15 +23,24 @@ body.crm-page { padding-left: var(--ordo-sidebar-width); }
   box-shadow: 8px 0 30px rgba(15, 23, 42, .08);
 }
 .shared-crm-close { display: none; }
-.shared-crm-brand { display: flex; align-items: center; color: #fff; text-decoration: none; padding: 6px 8px 20px; }
+.shared-crm-brand { display: flex; flex: 0 0 auto; align-items: center; color: #fff; text-decoration: none; padding: 6px 8px 18px; }
 .shared-crm-brand > img { display: block; width: auto; height: 40px; flex: 0 0 auto; }
 .shared-crm-user div { display: grid; gap: 2px; min-width: 0; }
 .shared-crm-user small { color: var(--ordo-sidebar-muted); font-size: 12px; }
-.shared-crm-sidebar nav { display: grid; gap: 5px; }
-.shared-crm-sidebar nav a { min-height: 44px; border-radius: 6px; color: #aeb9c9; padding: 12px 14px; font-size: 14px; font-weight: 700; text-decoration: none; }
+.shared-crm-sidebar nav {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 3px;
+}
+.shared-crm-sidebar nav::-webkit-scrollbar { width: 6px; }
+.shared-crm-sidebar nav::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(148, 163, 184, .24); }
+.shared-crm-sidebar nav a { min-height: 42px; border-radius: 6px; color: #aeb9c9; padding: 11px 14px; font-size: 14px; font-weight: 700; line-height: 1.25; text-decoration: none; }
 .shared-crm-sidebar nav a:hover { background: rgba(255,255,255,.09); color: #fff; }
 .shared-crm-sidebar nav a.active { background: rgba(255,255,255,.09); color: #fff; box-shadow: inset 3px 0 var(--ordo-accent); }
-.shared-crm-sidebar-foot { display: grid; gap: 14px; margin-top: auto; }
+.shared-crm-sidebar-foot { display: grid; flex: 0 0 auto; gap: 14px; margin-top: 14px; }
 .shared-crm-settings {
   width: 100%; min-height: 42px !important; border: 1px solid rgba(255,255,255,.12) !important; border-radius: 6px !important;
   background: rgba(255,255,255,.06) !important; color: #dbe4ef !important; padding: 8px 12px !important; font-weight: 800 !important;

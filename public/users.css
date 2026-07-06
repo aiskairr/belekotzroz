@@ -12,6 +12,8 @@ button:disabled { cursor: wait; opacity: .6; }
 .page-heading p, .section-heading p { margin: 0; color: #667085; }
 .eyebrow { color: var(--ordo-accent-dark, #1d4ed8) !important; font-size: 12px; font-weight: 900; text-transform: uppercase; }
 .secondary { border: 1px solid #cbd6e2; background: #fff; color: #344054; }
+.danger { border: 1px solid #fecaca; background: #fff; color: #b42318; }
+.danger:hover:not(:disabled) { background: #fef2f2; }
 .notice { margin-bottom: 16px; border: 1px solid #c8d8eb; border-left: 4px solid var(--ordo-accent, #2563eb); border-radius: 6px; background: #f7fbff; color: #526075; padding: 13px 16px; font-size: 13px; }
 .users-section { border: 1px solid #dbe3ec; border-radius: 7px; background: #fff; padding: 22px; box-shadow: 0 10px 30px rgba(34,48,74,.05); }
 .users-section h2 { margin: 0 0 4px; font-size: 24px; }
@@ -31,7 +33,7 @@ fieldset { min-width: 0; margin: 0; border: 1px solid #dbe3ec; border-radius: 6p
 fieldset label { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; } fieldset input { width: 17px; min-height: 17px; }
 .permission-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
 .permission-grid .report-profit-permission { grid-column: 1 / -1; margin-top: -3px; margin-left: 24px; color: #1c6cae; }
-.user-card footer { display: grid; grid-template-columns: minmax(280px, 1fr) auto auto auto; align-items: end; gap: 14px; border-top: 1px solid #eef1f5; background: #fbfcfd; padding: 14px 16px; }
+.user-card footer { display: grid; grid-template-columns: minmax(280px, 1fr) auto auto auto auto; align-items: end; gap: 14px; border-top: 1px solid #eef1f5; background: #fbfcfd; padding: 14px 16px; }
 .password-input-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
 .password-icon { min-height: 42px; border: 1px solid #cbd6e2; background: #fff; color: #344054; padding: 7px 10px; font-size: 11px; }
 .generate-password { align-self: end; }
@@ -54,6 +56,7 @@ body[data-mode="dark"] input,
 body[data-mode="dark"] select,
 body[data-mode="dark"] .password-icon,
 body[data-mode="dark"] .secondary { background: #0f172a; color: #e5edf7; border-color: #334155; }
+body[data-mode="dark"] .danger { border-color: #7f1d1d; background: #1f1215; color: #fecaca; }
 body[data-mode="dark"] .notice { border-color: #1e3a5f; background: #0f2137; color: #bfd6f7; }
 body[data-mode="dark"] .access-lock { border-bottom-color: #5b4420; background: #2a2112; color: #f4d28a; }
 @media (max-width: 1000px) { .identity-grid { grid-template-columns: 1fr 1fr; }.permission-grid { grid-template-columns: 1fr 1fr; } }

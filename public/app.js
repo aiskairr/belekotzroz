@@ -1,3 +1,5 @@
+import { navigation } from './crm-shell.js';
+
 const form = document.querySelector('#orderForm');
 const app = document.querySelector('.app');
 const branchScreen = document.querySelector('#branchScreen');
@@ -256,6 +258,16 @@ function configureSaleMode() {
   if (receiptLabel) receiptLabel.innerHTML = 'Фото чека <small>(необязательно)</small>';
 }
 
+function renderCrmNavigation() {
+  const nav = document.querySelector('#crmNav');
+  if (!nav) return;
+  const activePage = debtSaleMode ? 'debtSale' : 'sales';
+  nav.innerHTML = navigation
+    .filter((item) => hasCrmPermission(item.permission))
+    .map((item) => `<a id="${item.id}NavLink" class="${item.id === activePage ? 'active' : ''}" href="${item.href}" data-permission="${item.permission}">${escapeHtml(item.label)}</a>`)
+    .join('');
+}
+
 async function boot() {
   bindLogin();
   const session = await fetch('/api/crm/session').then((response) => response.json()).catch(() => ({ user: null }));
@@ -274,6 +286,7 @@ async function enterCrm(user) {
   await loadUserUiSettings();
   applyUiSettings();
   syncSettingsControls();
+  renderCrmNavigation();
   applyRoleAccess(user);
   startMoySkladMonitor();
   crmLoginScreen.classList.add('hidden');
@@ -1911,21 +1924,7 @@ function canUseBranch(branchKey) {
 }
 
 function getDefaultCrmPage(user) {
-  const pages = [
-    ['sales', '/sales.html'],
-    ['debtSale', '/debt-sale.html'],
-    ['deliveries', '/deliveries.html'],
-    ['reports', '/report.html'],
-    ['expenses', '/expenses.html'],
-    ['payroll', '/payroll.html'],
-    ['commercialDocuments', '/commercial-documents.html'],
-    ['priceFormula', '/price-formula.html'],
-    ['customsCalculator', '/customs-calculator.html'],
-    ['audit', '/audit.html'],
-    ['users', '/users.html'],
-    ['about', '/about.html']
-  ];
-  return pages.find(([permission]) => user.permissions?.includes(permission))?.[1] || '/about.html';
+  return navigation.find((item) => user.permissions?.includes(item.permission))?.href || '/about.html';
 }
 
 function getDraftKey() {

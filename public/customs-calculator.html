@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Калькулятор таможни</title>
-    <link rel="stylesheet" href="/customs-calculator.css?v=20260701-customs-history-owner-v3">
-    <link rel="stylesheet" href="/crm-shell.css?v=20260626-dark-fix">
+    <link rel="stylesheet" href="/customs-calculator.css?v=20260707-volume-per-unit-field">
+    <link rel="stylesheet" href="/crm-shell.css?v=20260706-unified-sidebar">
   </head>
   <body>
     <main class="customs-app">
@@ -42,18 +42,6 @@
             </div>
           </div>
           <div id="historyList" class="customs-history-list"></div>
-        </section>
-
-        <section class="summary-grid">
-          <article><span>Товаров в расчёте</span><strong id="rowsCount">0</strong></article>
-          <article><span>Общее кол-во шт.</span><strong id="unitsCount">0</strong></article>
-          <article><span>Общий вес, кг</span><strong id="weightTotal">0</strong></article>
-          <article><span>Общий вес, т</span><strong id="tonsTotal">0</strong></article>
-          <article><span>Общий объем, м³</span><strong id="volumeTotal">0</strong></article>
-          <article><span>Закупка</span><strong id="buyTotal">0,00 USD</strong></article>
-          <article><span>Общая прибыль</span><strong id="profitTotal">0,00 USD</strong></article>
-          <article><span>Общие расходы партии</span><strong id="expensesTotal">0,00 USD</strong></article>
-          <article class="summary-primary"><span>Себестоимость партии</span><strong id="landedTotal">0,00 USD</strong></article>
         </section>
 
         <section class="customs-search-card">
@@ -109,6 +97,10 @@
               <input id="partyEscortInput" type="number" min="0" step="0.01" value="0">
             </label>
             <label>
+              <span>Утильсбор, сом</span>
+              <input type="number" min="0" step="0.01" value="0">
+            </label>
+            <label>
               <span>Транспорт, USD</span>
               <input id="partyDeliveryUsdInput" type="number" min="0" step="0.01" value="0">
             </label>
@@ -128,6 +120,17 @@
           </div>
         </section>
 
+        <section class="summary-grid">
+          <article><span>Товаров в расчёте</span><strong id="rowsCount">0</strong></article>
+          <article><span>Общее кол-во шт.</span><strong id="unitsCount">0</strong></article>
+          <article><span>Общий вес, кг</span><strong id="weightTotal">0</strong></article>
+          <article><span>Общий объем, м³</span><strong id="volumeTotal">0</strong></article>
+          <article><span>Закупка</span><strong id="buyTotal">0,00 USD</strong></article>
+          <article><span>Общая прибыль</span><strong id="profitTotal">0,00 USD</strong></article>
+          <article><span>Общие расходы партии</span><strong id="expensesTotal">0,00 USD</strong></article>
+          <article class="summary-primary"><span>Себестоимость партии</span><strong id="landedTotal">0,00 USD</strong></article>
+        </section>
+
         <section class="customs-summary-table-card">
           <div class="section-heading">
             <div>
@@ -140,6 +143,6 @@
         </section>
       </section>
     </main>
-    <script src="/customs-calculator.js?v=20260701-customs-history-owner-v3" type="module"></script>
+    <script src="/customs-calculator.js?v=20260707-volume-per-unit-field" type="module"></script>
   </body>
 </html>

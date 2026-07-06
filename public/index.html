@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Рассрочка в МойСклад</title>
-    <link rel="stylesheet" href="/styles.css?v=20260625-delivery-client">
+    <link rel="stylesheet" href="/styles.css?v=20260706-unified-sidebar">
   </head>
   <body>
     <section id="crmLoginScreen" class="crm-login-screen">
@@ -64,23 +64,7 @@
       <div class="crm-brand">
         <img class="crm-brand-logo" src="/ordo-logo-light.svg?v=20260702-sidebar-colors" alt="Ordo CRM">
       </div>
-      <nav class="crm-nav" aria-label="Основная навигация">
-        <a id="salesNavLink" class="active" href="/sales.html" data-permission="sales">Продажи</a>
-        <a id="debtSaleNavLink" href="/debt-sale.html" data-permission="debtSale">Продать в долг</a>
-        <a href="/deliveries.html" data-permission="deliveries">Доставки</a>
-        <a href="/report.html" data-permission="reports">Отчетность</a>
-        <a href="/bank-commissions.html" data-permission="bankCommissions">Банковские комиссии</a>
-        <a href="/expenses.html" data-permission="expenses">Расходы</a>
-        <a href="/payroll.html" data-permission="payroll">Зарплаты</a>
-        <a href="/commercial-documents.html" data-permission="commercialDocuments">Счета юрлицам</a>
-        <a href="/reconciliation.html" data-permission="reconciliation">Акт сверки</a>
-        <a href="/whatsapp-broadcast.html" data-permission="whatsappBroadcast">WhatsApp рассылка</a>
-        <a href="/price-formula.html" data-permission="priceFormula">Расчет цен</a>
-        <a href="/customs-calculator.html" data-permission="customsCalculator">Калькулятор таможни</a>
-        <a href="/audit.html" data-permission="audit">Журнал действий</a>
-        <a href="/users.html" data-permission="users">Сотрудники и доступ</a>
-        <a href="/about.html" data-permission="about">О системе</a>
-      </nav>
+      <nav id="crmNav" class="crm-nav" aria-label="Основная навигация"></nav>
       <div class="crm-sidebar-foot">
         <button id="openSettingsButton" class="crm-settings-button" type="button">Настройки</button>
         <div class="crm-user-mini">
@@ -464,6 +448,6 @@
 
     <section id="printReceipt" class="print-receipt" aria-hidden="true"></section>
 
-    <script src="/app.js?v=20260702-pko-cash" type="module"></script>
+    <script src="/app.js?v=20260706-unified-sidebar" type="module"></script>
   </body>
 </html>

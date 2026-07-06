@@ -93,6 +93,7 @@ function renderUsers() {
         <label class="password-field"><span>Новый пароль</span><span class="password-input-row"><input type="password" data-field="password" placeholder="${entry.passwordSet ? 'Оставьте пустым, чтобы не менять' : 'Установите минимум 6 символов'}" autocomplete="new-password" ${disabled}><button class="password-icon" type="button" data-toggle-password title="Показать пароль" aria-label="Показать пароль" ${disabled}>Показать</button></span></label>
         <span class="password-state ${entry.passwordSet ? 'ready' : ''}">${entry.passwordSet ? 'Пароль установлен' : 'Вход заблокирован: пароль не задан'}</span>
         <button class="secondary generate-password" type="button" data-generate-password ${disabled}>Создать временный пароль</button>
+        <button class="danger delete-user" type="button" data-delete ${disabled || entry.role === 'admin' || entry.role === 'owner' ? 'disabled' : ''}>Удалить везде</button>
         <button type="button" data-save ${disabled}>Сохранить</button>
       </footer>
     </article>`;
@@ -102,6 +103,7 @@ function renderUsers() {
   list.querySelectorAll('[data-toggle-password]').forEach((button) => button.addEventListener('click', togglePassword));
   list.querySelectorAll('[data-generate-password]').forEach((button) => button.addEventListener('click', generatePassword));
   list.querySelectorAll('[data-save]').forEach((button) => button.addEventListener('click', saveUser));
+  list.querySelectorAll('[data-delete]').forEach((button) => button.addEventListener('click', deleteUser));
 }
 
 function togglePassword(event) {
@@ -171,6 +173,39 @@ async function saveUser(event) {
     button.disabled = false;
     button.textContent = 'Сохранить';
   }
+}
+
+async function deleteUser(event) {
+  const card = event.target.closest('.user-card');
+  const entry = users.find((item) => item.id === card.dataset.userId);
+  if (!entry) return;
+  const confirmed = window.confirm(`Удалить сотрудника «${entry.name}» из CRM и МойСклад? Если МойСклад не даст удалить из-за продаж, CRM попробует архивировать сотрудника в МойСклад.`);
+  if (!confirmed) return;
+
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = 'Удаляю...';
+  try {
+    const response = await fetch(`/api/crm/users/${card.dataset.userId}`, { method: 'DELETE' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Не удалось удалить сотрудника.');
+    users = users.filter((item) => item.id !== card.dataset.userId);
+    renderUsers();
+    status.textContent = `${users.length} сотрудников`;
+    showToast(`Сотрудник «${entry.name}» удален. МойСклад: ${formatMoySkladRemoval(data.user?.moySkladRemoval)}.`);
+  } catch (error) {
+    showToast(error.message, true);
+    button.disabled = false;
+    button.textContent = 'Удалить везде';
+  }
+}
+
+function formatMoySkladRemoval(result) {
+  if (!result) return 'нет данных';
+  if (result.status === 'deleted') return 'удален';
+  if (result.status === 'archived') return 'архивирован';
+  if (result.status === 'not_found') return 'не найден';
+  return result.status || 'обработан';
 }
 
 function showToast(message, error = false) {

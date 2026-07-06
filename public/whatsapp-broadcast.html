@@ -3,64 +3,119 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>WhatsApp рассылка | Ordo CRM</title>
-    <link rel="stylesheet" href="/crm-shell.css?v=20260629-bank-commissions">
-    <link rel="stylesheet" href="/whatsapp-broadcast.css?v=20260704-2">
+    <title>WAHA чат | Ordo CRM</title>
+    <link rel="stylesheet" href="/crm-shell.css?v=20260706-unified-sidebar">
+    <link rel="stylesheet" href="/whatsapp-broadcast.css?v=20260706-chat-scroll-fix">
   </head>
   <body>
     <main id="whatsappApp" class="wa-app hidden">
       <header class="wa-header">
         <div>
-          <p class="eyebrow">Маркетинг</p>
-          <h1>WhatsApp рассылка</h1>
-          <p>Выберите клиентов из базы, добавьте текст и ссылки на новые видео. CRM подготовит сообщения для WhatsApp.</p>
+          <p class="eyebrow">WAHA</p>
+          <h1>WhatsApp чат</h1>
+          <p>Подключите телефон через QR, выберите клиента или введите номер вручную и отправляйте сообщения напрямую через WAHA.</p>
         </div>
-        <button id="refreshButton" type="button">Обновить базу</button>
+        <div class="wa-header-actions">
+          <button id="checkWahaButton" class="secondary" type="button">Проверить</button>
+          <button id="connectWahaButton" type="button">Подключить QR</button>
+        </div>
       </header>
 
-      <section class="wa-layout">
-        <article class="wa-panel wa-customers">
-          <div class="wa-panel-head">
-            <div><h2>Клиенты</h2><p id="customersStatus">Загрузка...</p></div>
-            <button id="selectVisibleButton" class="secondary" type="button">Выбрать видимых</button>
+      <section class="wa-status-panel">
+        <div>
+          <span id="connectionDot" class="wa-dot"></span>
+          <strong id="connectionTitle">WAHA не проверен</strong>
+          <p id="wahaStatus">Backend: http://127.0.0.1:3300</p>
+        </div>
+        <details class="wa-settings">
+          <summary>Настройки</summary>
+          <div class="wa-settings-grid">
+            <label><span>Backend URL</span><input id="wahaBackendUrl" type="url" placeholder="http://127.0.0.1:3300"></label>
+            <label><span>API key</span><input id="wahaBackendKey" type="password" placeholder="change-me" autocomplete="off"></label>
           </div>
+        </details>
+      </section>
+
+      <section class="wa-bulk-panel">
+        <div class="wa-bulk-head">
+          <div>
+            <h2>Массовая рассылка</h2>
+            <p>Вставьте номера списком, добавьте текст и ссылки на видео. Отправка идет очередью через WAHA.</p>
+          </div>
+          <strong id="bulkCounter">0 номеров</strong>
+        </div>
+        <form id="bulkForm" class="wa-bulk-form">
+          <label>
+            <span>Номера</span>
+            <textarea id="bulkPhonesInput" rows="6" placeholder="996700123456&#10;0700123456&#10;+996 555 123 456"></textarea>
+          </label>
+          <label>
+            <span>Сообщение</span>
+            <textarea id="bulkMessageInput" rows="6" placeholder="Здравствуйте! Посмотрите новое видео:&#10;&#10;{videos}"></textarea>
+          </label>
+          <label>
+            <span>Ссылки на видео</span>
+            <textarea id="bulkVideosInput" rows="3" placeholder="https://youtube.com/..."></textarea>
+          </label>
+          <div class="wa-bulk-actions">
+            <label class="wa-bulk-check"><input id="bulkDryRunInput" type="checkbox"> <span>Тест без отправки</span></label>
+            <button id="bulkStartButton" type="submit">Начать рассылку</button>
+          </div>
+        </form>
+        <div id="bulkStatus" class="wa-bulk-status">Готово к рассылке.</div>
+      </section>
+
+      <section class="wa-chat-layout">
+        <aside class="wa-sidebar">
+          <div class="wa-sidebar-head">
+            <div>
+              <h2>Контакты</h2>
+              <p id="customersStatus">Загрузка...</p>
+            </div>
+            <button id="refreshButton" class="secondary" type="button">Обновить</button>
+          </div>
+
+          <form id="manualContactForm" class="wa-manual-contact">
+            <label><span>Номер</span><input id="manualPhoneInput" type="tel" placeholder="996700123456"></label>
+            <label><span>Имя</span><input id="manualNameInput" type="text" placeholder="Клиент"></label>
+            <button type="submit">Открыть чат</button>
+          </form>
+
           <form id="filtersForm" class="wa-filters">
             <label><span>Поиск</span><input id="searchInput" type="search" placeholder="Имя, телефон, ИНН"></label>
             <label><span>Тип</span><select id="customerTypeFilter"><option value="">Все</option><option value="individual">Физлица</option><option value="legal">Юрлица</option></select></label>
           </form>
+
           <div id="customersList" class="wa-customer-list"></div>
-        </article>
+        </aside>
 
-        <article class="wa-panel wa-composer">
-          <div class="wa-panel-head">
-            <div><h2>Сообщение</h2><p>Подстановки: {name}, {phone}</p></div>
+        <article class="wa-chat-panel">
+          <div class="wa-chat-head">
+            <div class="wa-avatar" id="chatAvatar">?</div>
+            <div>
+              <h2 id="chatName">Выберите контакт</h2>
+              <p id="chatPhone">Номер не выбран</p>
+            </div>
           </div>
-          <label><span>Текст</span><textarea id="messageText" rows="7"></textarea></label>
-          <label><span>Ссылки на видео</span><textarea id="videoLinks" rows="5" placeholder="Одна ссылка на строку"></textarea></label>
-          <div class="wa-actions">
-            <button id="buildQueueButton" type="button">Сформировать очередь</button>
-            <button id="exportCsvButton" class="secondary" type="button">CSV</button>
-            <button id="clearSelectionButton" class="secondary" type="button">Очистить выбор</button>
-          </div>
-          <div class="wa-preview">
-            <h3>Предпросмотр</h3>
-            <pre id="messagePreview"></pre>
-          </div>
-        </article>
-      </section>
 
-      <section class="wa-panel wa-queue-panel">
-        <div class="wa-panel-head">
-          <div><h2>Очередь отправки</h2><p id="queueStatus">Выбрано 0 клиентов</p></div>
-          <div class="wa-queue-actions">
-            <label><span>Пачка</span><input id="batchSize" type="number" min="1" max="30" value="10"></label>
-            <button id="openBatchButton" class="secondary" type="button">Открыть пачку</button>
-            <button id="openNextButton" type="button">Открыть следующий</button>
+          <div id="wahaQrBox" class="wa-qr-box hidden">
+            <img id="wahaQrImage" alt="QR код WhatsApp">
+            <p id="wahaQrHint">Откройте WhatsApp на телефоне: Настройки -> Связанные устройства -> Привязка устройства.</p>
           </div>
-        </div>
-        <div id="queueList" class="wa-queue-list"></div>
+
+          <div id="chatMessages" class="wa-messages">
+            <div class="wa-empty-chat">
+              Выберите клиента слева или введите номер вручную.
+            </div>
+          </div>
+
+          <form id="chatForm" class="wa-chat-form">
+            <textarea id="chatMessageInput" rows="3" placeholder="Напишите сообщение..." disabled></textarea>
+            <button id="sendMessageButton" type="submit" disabled>Отправить</button>
+          </form>
+        </article>
       </section>
     </main>
-    <script src="/whatsapp-broadcast.js?v=20260704-2" type="module"></script>
+    <script src="/whatsapp-broadcast.js?v=20260706-chat-scroll-fix" type="module"></script>
   </body>
 </html>

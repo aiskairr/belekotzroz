@@ -162,6 +162,21 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && url.pathname === '/api/bot/products') {
+      requireBotApiKey(req);
+      const search = (url.searchParams.get('search') || '').trim();
+      const limit = Math.max(1, Math.min(10, Number(url.searchParams.get('limit')) || 5));
+      if (search.length < 2) {
+        sendJson(res, 200, { products: [] });
+        return;
+      }
+      const products = await getMoySkladProducts(search, process.env.MOYSKLAD_STORE_HREF || '', {
+        branchName: url.searchParams.get('branchName') || ''
+      });
+      sendJson(res, 200, { products: products.slice(0, limit) });
+      return;
+    }
+
     if (req.method === 'PUT' && url.pathname === '/api/crm/ui-settings') {
       const user = requireAnyAuthenticatedUser(req);
       const settings = await updateCrmUiSettings(user, await readJson(req));
@@ -182,10 +197,21 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'DELETE' && url.pathname === '/api/customs-calculator/history') {
+      const user = requireAccountingAuth(req);
+      sendJson(res, 200, { deleted: await deleteCustomsCalculatorHistory(user) });
+      return;
+    }
+
     const customsHistoryMatch = url.pathname.match(/^\/api\/customs-calculator\/history\/([0-9a-f-]{36})$/i);
     if (customsHistoryMatch && req.method === 'GET') {
       const user = requireAccountingAuth(req);
       sendJson(res, 200, { row: await getCustomsCalculatorHistoryItem(customsHistoryMatch[1], user) });
+      return;
+    }
+    if (customsHistoryMatch && req.method === 'DELETE') {
+      const user = requireAccountingAuth(req);
+      sendJson(res, 200, { deleted: await deleteCustomsCalculatorHistoryItem(customsHistoryMatch[1], user) });
       return;
     }
 
@@ -216,6 +242,14 @@ const server = createServer(async (req, res) => {
       const actor = requireCrmPermission(req, 'users');
       const user = await updateManagedCrmUser(crmUserMatch[1], await readJson(req), actor);
       await writeAudit({ actor, user: actor, action: 'crm.user.update', entity: 'crm_user', entityId: user.id, description: `Доступ сотрудника изменен: ${user.name}` });
+      sendJson(res, 200, { user });
+      return;
+    }
+
+    if (crmUserMatch && req.method === 'DELETE') {
+      const actor = requireCrmPermission(req, 'users');
+      const user = await deleteManagedCrmUser(crmUserMatch[1], actor);
+      await writeAudit({ actor, user: actor, action: 'crm.user.delete', entity: 'crm_user', entityId: user.id, description: `Сотрудник удален из CRM: ${user.name}` });
       sendJson(res, 200, { user });
       return;
     }
@@ -5797,11 +5831,13 @@ async function getManagedCrmUsers() {
   try {
     rows = await supabaseGet('/rest/v1/crm_users', {
       select: 'id,login,name,position,salary,role,branches,permissions,active,password_hash,created_at,updated_at',
+      active: 'eq.true',
       order: 'name.asc'
     });
   } catch {
     rows = await supabaseGet('/rest/v1/crm_users', {
       select: 'id,login,name,position,role,branches,permissions,active,password_hash,created_at,updated_at',
+      active: 'eq.true',
       order: 'name.asc'
     });
   }
@@ -6000,6 +6036,101 @@ async function updateManagedCrmUser(id, input, actor) {
   return sanitizeManagedCrmUser(rows[0]);
 }
 
+async function deleteManagedCrmUser(id, actor) {
+  const currentRows = await supabaseGet('/rest/v1/crm_users', {
+    id: `eq.${id}`,
+    select: 'id,name,role,active',
+    limit: '1'
+  });
+  const current = currentRows[0];
+  if (!current) throw httpError(404, 'Сотрудник не найден.');
+  if (String(actor?.id || '') === String(current.id || '')) {
+    throw httpError(400, 'Нельзя удалить свою учетную запись.');
+  }
+  if (['admin', 'owner'].includes(current.role)) {
+    throw httpError(403, 'Администраторов и владельцев можно только отключить вручную через активность.');
+  }
+  if (actor?.role !== 'admin' && current.role === 'manager') {
+    throw httpError(403, 'Менеджера может удалить только главный администратор.');
+  }
+
+  const moySkladRemoval = await removeMoySkladEmployeeForCrmUser(current);
+
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/crm_users?id=eq.${encodeURIComponent(id)}&select=*`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({ active: false })
+  });
+  if (!rows[0]) throw httpError(404, 'Сотрудник не найден.');
+  payrollReportCache.clear();
+  return { ...sanitizeManagedCrmUser(rows[0]), moySkladRemoval };
+}
+
+async function removeMoySkladEmployeeForCrmUser(user) {
+  const nameKey = normalizeEmployeeKey(user?.name);
+  if (!nameKey) return { status: 'skipped', reason: 'empty_name' };
+
+  const employees = await getMoySkladEmployees();
+  const matches = employees.filter((employee) => normalizeEmployeeKey(employee.name) === nameKey);
+  if (!matches.length) {
+    return { status: 'not_found', reason: 'moysklad_employee_not_found' };
+  }
+  if (matches.length > 1) {
+    throw httpError(409, `В МойСклад найдено несколько сотрудников с именем «${user.name}». Удалите вручную или переименуйте дубли.`);
+  }
+
+  const employee = matches[0];
+  const token = getMoySkladTokenFor({ branchKey: employee.branchKey || '' });
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/json;charset=utf-8'
+  };
+
+  const deleteResponse = await moySkladFetch(employee.href, { method: 'DELETE', headers });
+  if (deleteResponse.ok) {
+    return { status: 'deleted', name: employee.name, href: employee.href };
+  }
+
+  const deleteData = await deleteResponse.json().catch(() => null);
+  const currentResponse = await moySkladFetch(employee.href, { headers });
+  const currentData = await currentResponse.json().catch(() => null);
+  const archiveResponse = await moySkladFetch(employee.href, {
+    method: 'PUT',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      archived: true,
+      description: appendDeletionMarker(currentData?.description || '', user.name)
+    })
+  });
+  if (archiveResponse.ok) {
+    return { status: 'archived', name: employee.name, href: employee.href, deleteError: extractMoySkladError(deleteData) };
+  }
+
+  const archiveData = await archiveResponse.json().catch(() => null);
+  throw httpError(
+    deleteResponse.status,
+    `МойСклад не дал удалить сотрудника «${employee.name}»: ${extractMoySkladError(deleteData) || 'есть связанные объекты'}. Архивация тоже не прошла: ${extractMoySkladError(archiveData) || archiveResponse.status}.`,
+    { deleteData, archiveData }
+  );
+}
+
+function appendDeletionMarker(description, name) {
+  const marker = `[ORDO_DELETED_EMPLOYEE ${new Date().toISOString()}] ${name || ''}`.trim();
+  return [String(description || '').trim(), marker].filter(Boolean).join('\n');
+}
+
+function extractMoySkladError(data) {
+  if (!data) return '';
+  if (typeof data === 'string') return data;
+  if (Array.isArray(data.errors) && data.errors.length) {
+    return data.errors.map((error) => error.error || error.message || '').filter(Boolean).join('; ');
+  }
+  return data.error || data.message || '';
+}
+
 const defaultCrmUiSettings = Object.freeze({
   theme: 'blue',
   mode: 'light',
@@ -6078,6 +6209,35 @@ async function saveCustomsCalculatorHistory(user, input) {
     body: JSON.stringify(payload)
   });
   return (await decorateCustomsHistoryRows(rows))[0];
+}
+
+async function deleteCustomsCalculatorHistory(user) {
+  if (!user?.id || String(user.id).startsWith('legacy:')) throw httpError(403, 'Для этого пользователя история недоступна.');
+  const canDeleteAll = user.role === 'owner' || user.role === 'admin';
+  const params = canDeleteAll
+    ? 'id=not.is.null'
+    : `user_id=eq.${encodeURIComponent(user.id)}`;
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/customs_calculator_history?${params}&select=id`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=representation' }
+  });
+  return Array.isArray(rows) ? rows.length : 0;
+}
+
+async function deleteCustomsCalculatorHistoryItem(id, user) {
+  if (!user?.id || String(user.id).startsWith('legacy:')) throw httpError(403, 'Для этого пользователя история недоступна.');
+  const canDeleteAll = user.role === 'owner' || user.role === 'admin';
+  const params = [
+    `id=eq.${encodeURIComponent(id)}`,
+    canDeleteAll ? '' : `user_id=eq.${encodeURIComponent(user.id)}`,
+    'select=id'
+  ].filter(Boolean).join('&');
+  const rows = await supabaseFetch(`${getSupabaseUrl()}/rest/v1/customs_calculator_history?${params}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=representation' }
+  });
+  if (!Array.isArray(rows) || !rows.length) throw httpError(404, 'Запись истории не найдена.');
+  return rows.length;
 }
 
 function normalizeCustomsCalculatorHistoryInput(input, user) {
@@ -6262,6 +6422,13 @@ function requireAnyAuthenticatedUser(req) {
   const user = getCrmUser(req);
   if (user || isReportAuthenticated(req)) return user || { login: 'legacy-report', name: 'Владелец', role: 'owner' };
   throw httpError(401, 'Войдите в систему.');
+}
+
+function requireBotApiKey(req) {
+  const expected = String(process.env.BOT_API_KEY || '').trim();
+  if (!expected) throw httpError(500, 'BOT_API_KEY не настроен.');
+  const provided = String(req.headers['x-bot-key'] || '').trim();
+  if (!provided || provided !== expected) throw httpError(401, 'Invalid bot API key.');
 }
 
 function requireCrmRole(req, roles) {

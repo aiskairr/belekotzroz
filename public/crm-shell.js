@@ -8,7 +8,7 @@ const roleLabels = {
   employee: 'Сотрудник'
 };
 
-const navigation = [
+export const navigation = [
   { id: 'sales', href: '/sales.html', label: 'Продажи', permission: 'sales' },
   { id: 'debtSale', href: '/debt-sale.html', label: 'Продать в долг', permission: 'debtSale' },
   { id: 'deliveries', href: '/deliveries.html', label: 'Доставки', permission: 'deliveries' },

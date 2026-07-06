@@ -42,7 +42,6 @@ const els = Object.fromEntries([
   'rowsCount',
   'unitsCount',
   'weightTotal',
-  'tonsTotal',
   'volumeTotal',
   'buyTotal',
   'profitTotal',
@@ -190,6 +189,11 @@ function handleRowClick(event) {
 }
 
 function handleHistoryClick(event) {
+  const deleteButton = event.target.closest('[data-delete-history-id]');
+  if (deleteButton) {
+    deleteHistoryItem(deleteButton.dataset.deleteHistoryId);
+    return;
+  }
   const button = event.target.closest('[data-history-id]');
   if (!button) return;
   restoreHistoryItem(button.dataset.historyId);
@@ -293,10 +297,11 @@ function renderRows() {
             <span>Название товара</span>
             <input data-field="name" type="text" value="${escapeAttr(row.name || '')}" placeholder="Например: пылесос Ordo">
           </label>
+          ${row.boxVariant === 'master' ? '' : `
           <label>
             <span>Кол-во шт. в партии</span>
             <input data-field="quantity" type="number" min="1" step="1" value="${numberValue(calculation.quantity, 1)}">
-          </label>
+          </label>`}
           <label>
             <span>Тип коробки</span>
             <select data-field="boxVariant">
@@ -321,6 +326,10 @@ function renderRows() {
             <span>Объём 1 коробки, м³</span>
             <input data-field="boxSize" type="number" min="0" step="0.000001" value="${numberValue(row.boxSize)}">
           </label>`}
+          <label>
+            <span>Объём 1 шт, м³</span>
+            <input type="number" value="${numberValue(getRowVolumePerUnit(row, calculation))}" readonly>
+          </label>
           <label>
             <span>Вес 1 шт, кг</span>
             <input data-field="packageWeightKg" type="number" min="0" step="0.001" value="${numberValue(row.packageWeightKg)}">
@@ -351,17 +360,12 @@ function renderRows() {
             <span>Прочие расходы за 1 шт, USD</span>
             <input data-field="otherPerUnitUsd" type="number" min="0" step="0.01" value="${numberValue(row.otherPerUnitUsd)}">
           </label>
-          <label class="wide">
-            <span>Комплектация</span>
-            <input data-field="specification" type="text" value="${escapeAttr(row.specification || '')}" placeholder="Описание комплектации">
-          </label>
         </div>
       </div>
       <div class="customs-row-summary">
         <div class="customs-metric"><span>Цена за ед. (USD)</span><strong>${formatUsd(calculation.buyUnitUsd)}</strong></div>
         <div class="customs-metric"><span>Сумма закупки (USD)</span><strong>${formatUsd(calculation.buyTotalUsd)}</strong></div>
         <div class="customs-metric"><span>Вес / объём</span><strong>${formatWeightVolume(calculation)}</strong></div>
-        <div class="customs-metric"><span>Вес партии</span><strong>${formatMeasure(calculation.totalWeightKg, 'кг')}</strong></div>
         <div class="customs-metric"><span>Коробки / штуки</span><strong>${formatBoxes(row, calculation.quantity)}</strong></div>
         <div class="customs-metric"><span>Ставка общих расходов</span><strong>${formatUsd(calculation.sharedRateUsd)}</strong></div>
         <div class="customs-metric"><span>Нагрузка на 1 шт</span><strong>${formatUsd(calculation.sharedPerUnitUsd)}</strong></div>
@@ -388,7 +392,10 @@ function renderHistoryList() {
       <strong>${escapeHtml(item.title || 'Без названия')}</strong>
       <small>${escapeHtml(formatHistoryMeta(item))}</small>
     </div>
-    <button type="button" data-history-id="${escapeHtml(item.id)}">Загрузить</button>
+    <div class="customs-history-actions">
+      <button type="button" data-history-id="${escapeHtml(item.id)}">Загрузить</button>
+      <button class="secondary danger" type="button" data-delete-history-id="${escapeHtml(item.id)}">Удалить</button>
+    </div>
   </article>`).join('');
 }
 
@@ -398,29 +405,45 @@ function renderProductSummaryTable(context = buildPartyContext()) {
     els.productSummaryFooter.innerHTML = '';
     return;
   }
+  const totals = state.rows.reduce((acc, row) => {
+    const calculation = calculateRow(row, context);
+    acc.quantity += calculation.quantity;
+    acc.volume += calculation.totalVolumeM3;
+    acc.finalTotal += calculation.finalTotalUsd;
+    return acc;
+  }, { quantity: 0, volume: 0, finalTotal: 0 });
   const rows = state.rows.map((row) => {
     const calculation = calculateRow(row, context);
     return `<tr>
       <td>${escapeHtml(row.name || 'Без названия')}</td>
       <td>${formatNumber(calculation.quantity)}</td>
-      <td>${formatUsd(calculation.finalPerUnitUsd)}</td>
       <td>${formatVolumePerUnit(row, calculation)}</td>
+      <td>${formatWeightPerUnit(row)}</td>
+      <td>${formatUsd(calculation.finalPerUnitUsd)}</td>
+      <td>${formatUsd(calculation.landedPerUnitUsd)}</td>
       <td>${formatUsd(calculation.finalTotalUsd)}</td>
     </tr>`;
   }).join('');
   els.productSummaryTable.innerHTML = `<table>
     <thead>
       <tr>
-        <th>Название товара</th>
+        <th>Наименование</th>
         <th>Количество</th>
-        <th>Цена за 1 товар</th>
         <th>Объём 1 товара</th>
+        <th>Вес 1 шт</th>
+        <th>Цена 1 товара со всеми расходами</th>
+        <th>Себестоимость</th>
         <th>Сумма</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
   </table>`;
-  els.productSummaryFooter.innerHTML = `<article><span>Общие расходы партии</span><strong>${formatUsd(context.totalCommonUsd)}</strong></article>`;
+  els.productSummaryFooter.innerHTML = `
+    <article><span>Общее количество всех партий</span><strong>${formatNumber(totals.quantity)} шт</strong></article>
+    <article><span>Общий объём</span><strong>${formatMeasure(roundMeasure(totals.volume), 'м³')}</strong></article>
+    <article><span>Общие расходы партии</span><strong>${formatUsd(context.totalCommonUsd)}</strong></article>
+    <article><span>Итог сумма</span><strong>${formatUsd(totals.finalTotal)}</strong></article>
+  `;
 }
 
 function renderSummary() {
@@ -454,7 +477,6 @@ function renderSummary() {
   els.rowsCount.textContent = formatNumber(totals.rows);
   els.unitsCount.textContent = formatNumber(totals.units);
   els.weightTotal.textContent = formatMeasure(totals.weight, 'кг');
-  els.tonsTotal.textContent = formatMeasure(totals.weight / 1000, 'т');
   els.volumeTotal.textContent = formatMeasure(totals.volume, 'м³');
   els.buyTotal.textContent = formatUsd(totals.buyUsd);
   els.profitTotal.textContent = formatUsd(totals.profitUsd);
@@ -591,9 +613,20 @@ function getRowTotalWeightKg(row, quantity = getRowQuantity(row)) {
 
 function getRowTotalVolumeM3(row) {
   if (row.boxVariant === 'master') {
-    return roundMoney(Number(row.masterBoxVolume || 0) * Math.max(0, Number(row.boxesCount || 0)));
+    return roundMeasure(Number(row.masterBoxVolume || 0) * Math.max(0, Number(row.boxesCount || 0)));
   }
-  return roundMoney(Number(row.boxSize || 0) * getRowQuantity(row));
+  return roundMeasure(Number(row.boxSize || 0) * getRowQuantity(row));
+}
+
+function getRowVolumePerUnit(row, calculation = null) {
+  if (row.boxVariant === 'master') {
+    const unitsPerBox = Number(row.unitsPerBox || 0);
+    return unitsPerBox > 0 ? roundMeasure(Number(row.masterBoxVolume || 0) / unitsPerBox) : 0;
+  }
+  if (Number(row.boxSize || 0) > 0) return roundMeasure(Number(row.boxSize || 0));
+  const quantity = Math.max(1, Number(calculation?.quantity || getRowQuantity(row)));
+  const totalVolume = Number(calculation?.totalVolumeM3 || getRowTotalVolumeM3(row));
+  return totalVolume > 0 ? roundMeasure(totalVolume / quantity) : 0;
 }
 
 function normalizeBuyPrice(buyPrice) {
@@ -621,15 +654,15 @@ function matchesProduct(product, query) {
 function loadSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    els.usdRateInput.value = String(Number(settings.usdRate || 89));
+    els.usdRateInput.value = String(Number(settings.usdRate || 88));
   } catch {
-    els.usdRateInput.value = '89';
+    els.usdRateInput.value = '88';
   }
 }
 
 function saveSettings() {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-    usdRate: Number(els.usdRateInput.value || 89)
+    usdRate: Number(els.usdRateInput.value || 88)
   }));
 }
 
@@ -692,6 +725,20 @@ async function saveCurrentToHistory() {
     }
   } catch (error) {
     window.alert(error.message || 'Не удалось сохранить в историю.');
+  }
+}
+
+async function deleteHistoryItem(id) {
+  const item = state.history.find((row) => row.id === id);
+  const title = item?.title || 'эту запись';
+  if (!window.confirm(`Удалить историю «${title}»?`)) return;
+
+  try {
+    await api(`/api/customs-calculator/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    state.history = state.history.filter((row) => row.id !== id);
+    renderHistoryList();
+  } catch (error) {
+    window.alert(error.message || 'Не удалось удалить запись истории.');
   }
 }
 
@@ -772,12 +819,11 @@ function formatWeightVolume(calculation) {
 }
 
 function formatVolumePerUnit(row, calculation) {
-  const quantity = Math.max(1, Number(calculation?.quantity || 1));
-  const totalVolume = Number(calculation?.totalVolumeM3 || 0);
-  const perUnit = totalVolume > 0 ? roundMoney(totalVolume / quantity) : 0;
-  if (perUnit > 0) return formatMeasure(perUnit, 'м³');
-  if (row.boxVariant === 'master') return formatMeasure(Number(row.masterBoxVolume || 0), 'м³');
-  return formatMeasure(Number(row.boxSize || 0), 'м³');
+  return formatMeasure(getRowVolumePerUnit(row, calculation), 'м³');
+}
+
+function formatWeightPerUnit(row) {
+  return formatMeasure(Number(row.packageWeightKg || 0), 'кг');
 }
 
 function formatBoxes(row, quantity) {
@@ -791,6 +837,10 @@ function formatBoxes(row, quantity) {
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function roundMeasure(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
 }
 
 function normalizeSearch(value) {

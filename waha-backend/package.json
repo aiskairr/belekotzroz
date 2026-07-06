@@ -1,0 +1,16 @@
+{
+  "name": "ordo-waha-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/waha-client.js && node --check src/message-queue.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "docker": "^1.0.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
