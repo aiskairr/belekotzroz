@@ -12,6 +12,10 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const publicDir = join(__dirname, 'public');
 const dataDir = join(__dirname, 'data');
 const auditLogPath = join(dataDir, 'audit-log.jsonl');
+const attendanceStoresPath = join(dataDir, 'attendance-stores.json');
+const attendanceRecordsPath = join(dataDir, 'attendance-records.json');
+const attendanceEventsPath = join(dataDir, 'attendance-events.json');
+const attendanceSchedulePath = join(dataDir, 'attendance-schedule.json');
 const execFileAsync = promisify(execFile);
 
 loadDotEnv();
@@ -91,6 +95,8 @@ const RECONCILIATION_CACHE_TTL_MS = 180_000;
 const RECONCILIATION_DOCUMENT_LIMIT = Math.max(200, Math.min(5000, Number(process.env.RECONCILIATION_DOCUMENT_LIMIT || 2000)));
 const WHATSAPP_CUSTOMERS_CACHE_TTL_MS = 300_000;
 const WHATSAPP_CUSTOMERS_LIMIT = Math.max(200, Math.min(5000, Number(process.env.WHATSAPP_CUSTOMERS_LIMIT || 2000)));
+const ATTENDANCE_DEFAULT_RADIUS_METERS = 10;
+const ATTENDANCE_MIN_SCAN_INTERVAL_MS = 30_000;
 const categorySaleBonusRules = [
   { name: 'Встраиваемые варочные панели', amount: 300, match: /встраиваем.*вароч|варочн.*панел/ },
   { name: 'Встраиваемые духовые шкафы', amount: 400, match: /встраиваем.*духов|духов.*шкаф/ },
@@ -145,9 +151,24 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host}`);
 
-    if (req.method === 'GET' && url.pathname === '/api/crm/session') {
-      sendJson(res, 200, { user: getCrmUser(req) });
+    if (req.method === 'GET' && url.pathname === '/api/status') {
+      sendJson(res, 200, { ok: true, service: 'mysrs-backend' });
       return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/crm/session') {
+      const user = getCrmUser(req);
+      if (user) await autoCloseAttendanceShifts();
+      sendJson(res, 200, { user, attendance: user ? await getAttendanceGate(user) : null });
+      return;
+    }
+
+    const gateUser = getCrmUser(req);
+    if (url.pathname.startsWith('/api/') && gateUser && await shouldBlockByAttendanceGate(url.pathname, gateUser)) {
+      throw httpError(428, 'Перед работой в системе нужно отсканировать QR на рабочей точке и отметить приход.', {
+        attendanceRequired: true,
+        attendanceUrl: '/attendance.html'
+      });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/crm/ui-settings') {
@@ -227,7 +248,7 @@ const server = createServer(async (req, res) => {
       if (!user) throw httpError(401, 'Неверный логин или пароль.');
       setCrmSession(res, user);
       await writeAudit({ user, action: 'login', entity: 'session', description: 'Вход в CRM' });
-      sendJson(res, 200, { user });
+      sendJson(res, 200, { user, attendance: await getAttendanceGate(user) });
       return;
     }
 
@@ -285,7 +306,8 @@ const server = createServer(async (req, res) => {
       const report = await getReconciliationDebtors({
         search: url.searchParams.get('search') || '',
         customerType: url.searchParams.get('customerType') || '',
-        limit: url.searchParams.get('limit') || ''
+        limit: url.searchParams.get('limit') || '',
+        offset: url.searchParams.get('offset') || ''
       });
       sendJson(res, 200, report);
       return;
@@ -307,6 +329,136 @@ const server = createServer(async (req, res) => {
         limit: url.searchParams.get('limit') || ''
       });
       sendJson(res, 200, customers);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/attendance/status') {
+      const user = requireCrmPermission(req, 'attendance');
+      await autoCloseAttendanceShifts();
+      sendJson(res, 200, await getAttendanceStatus(user));
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/attendance/scan') {
+      const user = requireCrmPermission(req, 'attendance');
+      const result = await scanAttendanceQr(user, await readJson(req), req);
+      await writeAudit({
+        user,
+        action: result.action === 'check_out' ? 'attendance.check_out' : 'attendance.check_in',
+        entity: 'attendance_record',
+        entityId: result.record?.id || '',
+        description: `${result.action === 'check_out' ? 'Уход' : 'Приход'}: ${result.store?.name || ''}`,
+        details: { distanceMeters: result.distanceMeters, storeId: result.store?.id || '' }
+      });
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/attendance/open') {
+      const user = requireCrmPermission(req, 'attendance');
+      const result = await markAttendanceShift(user, await readJson(req), req, 'check_in');
+      await writeAudit({
+        user,
+        action: 'attendance.check_in',
+        entity: 'attendance_record',
+        entityId: result.record?.id || '',
+        description: `Приход: ${result.store?.name || ''}`,
+        details: { distanceMeters: result.distanceMeters, storeId: result.store?.id || '' }
+      });
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/attendance/close') {
+      const user = requireCrmPermission(req, 'attendance');
+      const result = await markAttendanceShift(user, await readJson(req), req, 'check_out');
+      await writeAudit({
+        user,
+        action: 'attendance.check_out',
+        entity: 'attendance_record',
+        entityId: result.record?.id || '',
+        description: `Уход: ${result.store?.name || ''}`,
+        details: { distanceMeters: result.distanceMeters, storeId: result.store?.id || '' }
+      });
+      sendJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/attendance/reports') {
+      const user = requireCrmPermission(req, 'attendance');
+      await autoCloseAttendanceShifts();
+      const report = await getAttendanceReport({
+        dateFrom: url.searchParams.get('date_from') || url.searchParams.get('dateFrom') || '',
+        dateTo: url.searchParams.get('date_to') || url.searchParams.get('dateTo') || '',
+        userId: url.searchParams.get('user_id') || url.searchParams.get('userId') || '',
+        storeId: url.searchParams.get('store_id') || url.searchParams.get('storeId') || ''
+      }, user);
+      sendJson(res, 200, report);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/attendance/stores') {
+      requireCrmPermission(req, 'attendance');
+      sendJson(res, 200, { stores: await getAttendanceStores() });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/attendance/stores') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const store = await createAttendanceStore(await readJson(req), user);
+      await writeAudit({ user, action: 'attendance.store.create', entity: 'attendance_store', entityId: store.id, description: `Рабочая точка создана: ${store.name}` });
+      sendJson(res, 201, { store });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/attendance/admin-open') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const record = await adminOpenAttendanceShift(await readJson(req), user);
+      await writeAudit({ user, action: 'attendance.admin_open', entity: 'attendance_record', entityId: record.id, description: `Смена открыта администратором: ${record.userName}` });
+      sendJson(res, 201, { record });
+      return;
+    }
+
+    if (req.method === 'PUT' && url.pathname === '/api/attendance/schedule') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const schedule = await saveAttendanceSchedule(await readJson(req));
+      await writeAudit({ user, action: 'attendance.schedule.update', entity: 'attendance_schedule', entityId: 'default', description: 'График посещаемости изменен', details: schedule });
+      sendJson(res, 200, { schedule });
+      return;
+    }
+
+    const attendanceStoreMatch = url.pathname.match(/^\/api\/attendance\/stores\/([0-9a-f-]{36})$/i);
+    if (attendanceStoreMatch && req.method === 'PUT') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const store = await updateAttendanceStore(attendanceStoreMatch[1], await readJson(req), user);
+      await writeAudit({ user, action: 'attendance.store.update', entity: 'attendance_store', entityId: store.id, description: `Рабочая точка изменена: ${store.name}` });
+      sendJson(res, 200, { store });
+      return;
+    }
+
+    if (attendanceStoreMatch && req.method === 'DELETE') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const store = await deleteAttendanceStore(attendanceStoreMatch[1]);
+      await writeAudit({ user, action: 'attendance.store.delete', entity: 'attendance_store', entityId: store.id, description: `Рабочая точка удалена: ${store.name}` });
+      sendJson(res, 200, { ok: true, store });
+      return;
+    }
+
+    const attendanceQrMatch = url.pathname.match(/^\/api\/attendance\/stores\/([0-9a-f-]{36})\/generate-qr$/i);
+    if (attendanceQrMatch && req.method === 'POST') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const store = await generateAttendanceStoreQr(attendanceQrMatch[1], await readJson(req), user);
+      await writeAudit({ user, action: 'attendance.store.qr', entity: 'attendance_store', entityId: store.id, description: `QR обновлен: ${store.name}` });
+      sendJson(res, 200, { store });
+      return;
+    }
+
+    const attendanceDeleteQrMatch = url.pathname.match(/^\/api\/attendance\/stores\/([0-9a-f-]{36})\/qr$/i);
+    if (attendanceDeleteQrMatch && req.method === 'DELETE') {
+      const user = requireCrmRole(req, ['admin', 'owner']);
+      const store = await disableAttendanceStoreQr(attendanceDeleteQrMatch[1]);
+      await writeAudit({ user, action: 'attendance.store.qr.disable', entity: 'attendance_store', entityId: store.id, description: `QR отключен: ${store.name}` });
+      sendJson(res, 200, { store });
       return;
     }
 
@@ -610,6 +762,9 @@ const server = createServer(async (req, res) => {
       const report = await getSalesReport({
         dateFrom: url.searchParams.get('dateFrom') || '',
         dateTo: url.searchParams.get('dateTo') || '',
+        documentType: url.searchParams.get('documentType') || '',
+        customerType: url.searchParams.get('customerType') || '',
+        search: url.searchParams.get('search') || '',
         retailStoreHref: url.searchParams.get('retailStoreHref') || '',
         storeHref: url.searchParams.get('storeHref') || ''
       });
@@ -2020,7 +2175,7 @@ async function loadWhatsappCustomers() {
       phone: phone.displayPhone,
       whatsappPhone: phone.whatsappPhone,
       customerType: type,
-      customerTypeLabel: type === 'legal' ? 'Юрлицо' : 'Физлицо',
+      customerTypeLabel: getCounterpartyTypeLabel(counterparty),
       inn: counterparty.inn || '',
       actualAddress: counterparty.actualAddress || counterparty.legalAddress || '',
       updated: counterparty.updated || counterparty.created || ''
@@ -3106,7 +3261,7 @@ function getPaymentSortWeight(paymentType) {
 }
 
 async function getSalesReport(input) {
-  const cacheKey = [input.dateFrom, input.dateTo, input.retailStoreHref || '', input.storeHref || ''].join('|');
+  const cacheKey = [input.dateFrom, input.dateTo, input.documentType || '', input.customerType || '', input.search || '', input.retailStoreHref || '', input.storeHref || ''].join('|');
   const cached = salesReportCache.get(cacheKey);
   if (cached && Date.now() - cached.createdAt < 60_000) return cached.value;
   if (salesReportInflight.has(cacheKey)) return salesReportInflight.get(cacheKey);
@@ -3224,7 +3379,76 @@ async function getBankCommissionAnalytics(input) {
   };
 }
 
+async function loadReconciliationDebtorsChunk(input = {}) {
+  const token = requiredEnv('MOYSKLAD_TOKEN');
+  const limit = Math.max(20, Math.min(100, Number(input.limit) || 60));
+  const offset = Math.max(0, Number(input.offset) || 0);
+  const search = normalizeTextSearch(input.search);
+  const customerType = String(input.customerType || '').trim();
+  const [retailRows, demandRows] = await Promise.all([
+    loadReconciliationDocuments(token, 'retaildemand', { limit, maxRows: limit, offset }),
+    loadReconciliationDocuments(token, 'demand', { limit, maxRows: limit, offset })
+  ]);
+  const rawDocuments = [...retailRows, ...demandRows]
+    .map(mapReconciliationDocument)
+    .filter((document) => document.customerHref && document.debt > 0)
+    .filter((document) => {
+      if (customerType && document.customerType !== customerType) return false;
+      if (!search) return true;
+      return normalizeTextSearch([document.customerName, document.customerPhone, document.customerInn, document.name].join(' ')).includes(search);
+    });
+  const debtorsByHref = new Map();
+  for (const document of rawDocuments) {
+    const existing = debtorsByHref.get(document.customerHref) || {
+      id: document.customerId,
+      href: document.customerHref,
+      name: document.customerName || 'Без имени',
+      customerType: document.customerType,
+      customerTypeLabel: document.customerTypeLabel,
+      phone: document.customerPhone,
+      inn: document.customerInn,
+      actualAddress: document.customerAddress,
+      debt: 0,
+      amount: 0,
+      paid: 0,
+      documentCount: 0,
+      lastMoment: '',
+      lastDocumentName: ''
+    };
+    existing.debt = roundMoney(existing.debt + document.debt);
+    existing.amount = roundMoney(existing.amount + document.amount);
+    existing.paid = roundMoney(existing.paid + document.paid);
+    existing.documentCount += 1;
+    if (!existing.lastMoment || new Date(document.moment) > new Date(existing.lastMoment)) {
+      existing.lastMoment = document.moment;
+      existing.lastDocumentName = document.name;
+    }
+    debtorsByHref.set(document.customerHref, existing);
+  }
+  const debtors = [...debtorsByHref.values()].sort((left, right) => right.debt - left.debt || String(left.name).localeCompare(String(right.name), 'ru'));
+  const totals = debtors.reduce((sum, debtor) => ({
+    debt: roundMoney(sum.debt + debtor.debt),
+    amount: roundMoney(sum.amount + debtor.amount),
+    paid: roundMoney(sum.paid + debtor.paid),
+    debtors: sum.debtors + 1,
+    documents: sum.documents + debtor.documentCount
+  }), { debt: 0, amount: 0, paid: 0, debtors: 0, documents: 0 });
+  const hasMore = retailRows.length >= limit || demandRows.length >= limit;
+  return {
+    loadedAt: new Date().toISOString(),
+    truncated: hasMore,
+    partial: true,
+    totals,
+    debtors,
+    page: { offset, limit, nextOffset: offset + limit, hasMore },
+    filters: { search: input.search || '', customerType, limit, offset }
+  };
+}
+
 async function getReconciliationDebtors(input = {}) {
+  if (input.offset !== undefined && input.offset !== null && String(input.offset) !== '') {
+    return loadReconciliationDebtorsChunk(input);
+  }
   const limit = Math.max(20, Math.min(500, Number(input.limit) || 200));
   const search = normalizeTextSearch(input.search);
   const customerType = String(input.customerType || '').trim();
@@ -3355,7 +3579,7 @@ async function getReconciliationDebtorDetails(counterpartyId) {
 
 async function loadReconciliationDocuments(token, documentType, options = {}) {
   const rows = [];
-  let offset = 0;
+  let offset = Math.max(0, Number(options.offset) || 0);
   const limit = Math.min(100, Math.max(1, Number(options.limit) || 100));
   const maxRows = Math.min(RECONCILIATION_DOCUMENT_LIMIT, Math.max(limit, Number(options.maxRows) || RECONCILIATION_DOCUMENT_LIMIT));
 
@@ -3582,18 +3806,49 @@ function mapReconciliationDocument(document) {
 }
 
 function normalizeCounterpartyType(counterparty) {
-  const value = String(counterparty?.companyType || counterparty?.legalTitle || '').toLowerCase();
+  const value = String([
+    counterparty?.companyType,
+    counterparty?.legalTitle,
+    counterparty?.name
+  ].filter(Boolean).join(' ')).toLowerCase();
+  if (value.includes('entrepreneur') || value.includes('индивидуальный предприниматель') || /(^|[\s"«])ип([\s."»]|$)/i.test(value)) return 'entrepreneur';
   if (value.includes('individual') || value.includes('person') || value.includes('физ')) return 'individual';
   if (value.includes('legal') || value.includes('company') || value.includes('юр')) return 'legal';
   return counterparty?.inn ? 'legal' : 'individual';
 }
 
 function getCounterpartyTypeLabel(counterparty) {
-  return normalizeCounterpartyType(counterparty) === 'legal' ? 'Юрлицо' : 'Физлицо';
+  const type = normalizeCounterpartyType(counterparty);
+  if (type === 'entrepreneur') return 'ИП';
+  return type === 'legal' ? 'Юрлицо' : 'Физлицо';
 }
 
 function normalizeTextSearch(value) {
   return String(value || '').trim().toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ');
+}
+
+function normalizeReportSearch(value) {
+  return String(value || '').toLowerCase().replace(/ё/g, 'е').replace(/[^a-zа-я0-9]+/giu, ' ').trim();
+}
+
+function reportRowMatchesSearch(row, search) {
+  const query = normalizeReportSearch(search);
+  if (!query) return true;
+  const products = Array.isArray(row.products) ? row.products.map((product) => [product.code, product.name, product.categoryName, product.categoryPath].join(' ')).join(' ') : '';
+  const haystack = normalizeReportSearch([row.name, row.customerName, row.customerPhone, row.customerInn, row.customerAddress, row.organizationName, row.employeeName, row.paymentType, row.comment, row.productText, products].join(' '));
+  return haystack.includes(query);
+}
+
+function reportCustomerKey(row) {
+  const directKey = String(row.customerHref || row.customerId || '').trim();
+  if (directKey) return directKey;
+  return normalizeReportSearch([row.customerName, row.customerInn, row.customerPhone].join(' '));
+}
+
+function normalizeReportCustomerTypeFilter(value) {
+  const type = String(value || '').trim();
+  if (type === 'person') return 'individual';
+  return ['legal', 'entrepreneur', 'individual'].includes(type) ? type : '';
 }
 
 async function loadSalesReport(input) {
@@ -3602,17 +3857,27 @@ async function loadSalesReport(input) {
   const dateTo = normalizeReportDate(input.dateTo, 'to');
   const retailStoreHref = String(input.retailStoreHref || '').trim();
   const storeHref = String(input.storeHref || '').trim();
+  const allowedDocumentTypes = ['retaildemand', 'demand', 'retailsalesreturn', 'salesreturn'];
+  const requestedDocumentType = String(input.documentType || '').trim();
+  const documentTypes = allowedDocumentTypes.includes(requestedDocumentType) ? [requestedDocumentType] : allowedDocumentTypes;
+  const customerTypeFilter = normalizeReportCustomerTypeFilter(input.customerType);
+  const search = String(input.search || '').trim();
 
-  const [retailRows, demandRows, currencies] = await Promise.all([
-    loadMoySkladReportDocuments(token, 'retaildemand', dateFrom, dateTo, { retailStoreHref }),
-    loadMoySkladReportDocuments(token, 'demand', dateFrom, dateTo, { storeHref }),
+  const [documentGroups, currencies] = await Promise.all([
+    Promise.all(documentTypes.map((documentType) => loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo, { retailStoreHref, storeHref }))),
     getMoySkladCurrencies(token).catch(() => [])
   ]);
   const currenciesByHref = new Map(currencies.map((currency) => [currency.meta?.href, currency]));
 
-  const rows = [...retailRows, ...demandRows]
+  const mappedRows = documentGroups.flat()
     .map((document) => mapReportDocument(document, currenciesByHref))
+    .filter((row) => !customerTypeFilter || row.customerType === customerTypeFilter)
     .sort((left, right) => new Date(right.moment) - new Date(left.moment));
+  const firstMatchedCustomer = search ? mappedRows.find((row) => reportRowMatchesSearch(row, search)) : null;
+  const matchedCustomerKey = firstMatchedCustomer ? reportCustomerKey(firstMatchedCustomer) : '';
+  const rows = search
+    ? mappedRows.filter((row) => matchedCustomerKey && reportCustomerKey(row) === matchedCustomerKey)
+    : mappedRows;
 
   const totals = rows.reduce((sum, row) => ({
     documents: sum.documents + 1,
@@ -3751,10 +4016,10 @@ async function loadMoySkladReportDocuments(token, documentType, dateFrom, dateTo
       `moment>=${dateFrom}`,
       `moment<=${dateTo}`
     ];
-    if (documentType === 'retaildemand' && options.retailStoreHref) {
+    if ((documentType === 'retaildemand' || documentType === 'retailsalesreturn') && options.retailStoreHref) {
       filters.push(`retailStore=${options.retailStoreHref}`);
     }
-    if (documentType === 'demand' && options.storeHref) {
+    if ((documentType === 'demand' || documentType === 'salesreturn') && options.storeHref) {
       filters.push(`store=${options.storeHref}`);
     }
 
@@ -3826,17 +4091,22 @@ function mapReportDocument(document, currenciesByHref = new Map()) {
   const positions = Array.isArray(document.positions?.rows) ? document.positions.rows : [];
   const moneyRate = getReportDocumentMoneyRate(document, currenciesByHref);
   const amount = fromReportDocumentMoney(document.sum, moneyRate);
+  const isReturnDocument = documentType === 'retailsalesreturn' || documentType === 'salesreturn';
   const paidAttribute = getReportNumberAttribute(document, 'PAID', documentType);
   const unpaidAttribute = getReportNumberAttribute(document, 'UNPAID', documentType);
   const linkedPaid = fromReportDocumentMoney(document.payedSum, moneyRate);
-  const paid = documentType === 'demand'
+  const paid = isReturnDocument
+    ? amount
+    : documentType === 'demand'
     ? roundMoney(Math.max(linkedPaid, paidAttribute !== null ? paidAttribute * moneyRate : 0))
     : paidAttribute !== null
       ? roundMoney(paidAttribute * moneyRate)
       : documentType === 'retaildemand'
       ? roundMoney(fromReportDocumentMoney(document.cashSum, moneyRate) + fromReportDocumentMoney(document.noCashSum, moneyRate))
       : fromReportDocumentMoney(document.payedSum, moneyRate);
-  const unpaid = documentType === 'demand'
+  const unpaid = isReturnDocument
+    ? 0
+    : documentType === 'demand'
     ? roundMoney(Math.max(0, amount - paid))
     : unpaidAttribute !== null
     ? roundMoney(unpaidAttribute * moneyRate)
@@ -3854,7 +4124,12 @@ function mapReportDocument(document, currenciesByHref = new Map()) {
     moment: document.moment || document.created || '',
     storeName: document.retailStore?.name || document.store?.name || '',
     organizationName: document.organization?.name || '',
+    customerId: document.agent?.id || getIdFromHref(document.agent?.meta?.href || ''),
+    customerHref: document.agent?.meta?.href || '',
     customerName: document.agent?.name || '',
+    customerType: normalizeCounterpartyType(document.agent),
+    customerTypeLabel: getCounterpartyTypeLabel(document.agent),
+    customerInn: document.agent?.inn || '',
     customerPhone: getReportPhone(document),
     customerAddress: getReportAddress(document),
     webUrl: getMoySkladWebUrl(documentType, document.id),
@@ -4291,6 +4566,12 @@ function getDocumentTypeLabel(type) {
   }
   if (type === 'demand') {
     return 'Отгрузка';
+  }
+  if (type === 'retailsalesreturn') {
+    return 'Возврат продажи';
+  }
+  if (type === 'salesreturn') {
+    return 'Возврат отгрузки';
   }
   if (type === 'customerorder') {
     return 'Заказ';
@@ -4947,6 +5228,670 @@ async function readJson(req) {
     }
   }
   return body ? JSON.parse(body) : {};
+}
+
+async function getAttendanceStores() {
+  const stores = await readJsonArrayFile(attendanceStoresPath);
+  if (stores.length) return stores;
+  return seedDefaultAttendanceStores();
+}
+
+async function seedDefaultAttendanceStores() {
+  const now = new Date().toISOString();
+  const rows = [
+    {
+      id: randomUUID(),
+      name: 'Аю-Гранд',
+      branch: 'ayu',
+      address: '',
+      latitude: 0,
+      longitude: 0,
+      allowedRadiusMeters: ATTENDANCE_DEFAULT_RADIUS_METERS,
+      qrToken: createAttendanceToken(),
+      qrTokenExpiresAt: '',
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: randomUUID(),
+      name: 'Беш-Сары',
+      branch: 'besh',
+      address: '',
+      latitude: 0,
+      longitude: 0,
+      allowedRadiusMeters: ATTENDANCE_DEFAULT_RADIUS_METERS,
+      qrToken: createAttendanceToken(),
+      qrTokenExpiresAt: '',
+      createdAt: now,
+      updatedAt: now
+    }
+  ];
+  await writeJsonArrayFile(attendanceStoresPath, rows);
+  return rows;
+}
+
+async function createAttendanceStore(input) {
+  const stores = await getAttendanceStores();
+  const now = new Date().toISOString();
+  const store = normalizeAttendanceStoreInput(input, {
+    id: randomUUID(),
+    qrToken: createAttendanceToken(),
+    qrTokenExpiresAt: '',
+    createdAt: now,
+    updatedAt: now
+  });
+  stores.push(store);
+  await writeJsonArrayFile(attendanceStoresPath, stores);
+  return store;
+}
+
+async function updateAttendanceStore(id, input) {
+  const stores = await getAttendanceStores();
+  const index = stores.findIndex((store) => store.id === id);
+  if (index < 0) throw httpError(404, 'Рабочая точка не найдена.');
+  stores[index] = normalizeAttendanceStoreInput(input, {
+    ...stores[index],
+    updatedAt: new Date().toISOString()
+  });
+  await writeJsonArrayFile(attendanceStoresPath, stores);
+  return stores[index];
+}
+
+async function deleteAttendanceStore(id) {
+  const stores = await getAttendanceStores();
+  const index = stores.findIndex((store) => store.id === id);
+  if (index < 0) throw httpError(404, 'Рабочая точка не найдена.');
+  const [store] = stores.splice(index, 1);
+  await writeJsonArrayFile(attendanceStoresPath, stores);
+  return store;
+}
+
+async function generateAttendanceStoreQr(id, input = {}) {
+  const stores = await getAttendanceStores();
+  const index = stores.findIndex((store) => store.id === id);
+  if (index < 0) throw httpError(404, 'Рабочая точка не найдена.');
+  const ttlMinutes = Number(input.ttlMinutes || 0);
+  stores[index] = {
+    ...stores[index],
+    qrToken: createAttendanceToken(),
+    qrDisabled: false,
+    qrTokenExpiresAt: ttlMinutes > 0 ? new Date(Date.now() + ttlMinutes * 60_000).toISOString() : '',
+    updatedAt: new Date().toISOString()
+  };
+  await writeJsonArrayFile(attendanceStoresPath, stores);
+  return stores[index];
+}
+
+async function disableAttendanceStoreQr(id) {
+  const stores = await getAttendanceStores();
+  const index = stores.findIndex((store) => store.id === id);
+  if (index < 0) throw httpError(404, 'Рабочая точка не найдена.');
+  stores[index] = {
+    ...stores[index],
+    qrToken: '',
+    qrDisabled: true,
+    qrTokenExpiresAt: '',
+    updatedAt: new Date().toISOString()
+  };
+  await writeJsonArrayFile(attendanceStoresPath, stores);
+  return stores[index];
+}
+
+function normalizeAttendanceStoreInput(input, base) {
+  const name = String(input.name ?? base.name ?? '').trim();
+  if (!name) throw httpError(400, 'Укажите название рабочей точки.');
+  const latitude = Number(input.latitude ?? base.latitude);
+  const longitude = Number(input.longitude ?? base.longitude);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) throw httpError(400, 'Некорректная широта.');
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) throw httpError(400, 'Некорректная долгота.');
+  const allowedRadiusMeters = Math.max(1, Math.min(1000, Number(input.allowedRadiusMeters ?? input.allowed_radius_meters ?? base.allowedRadiusMeters ?? ATTENDANCE_DEFAULT_RADIUS_METERS)));
+  return {
+    id: base.id,
+    name,
+    branch: normalizeAttendanceBranchKey(input.branch ?? base.branch ?? name),
+    address: String(input.address ?? base.address ?? '').trim(),
+    latitude,
+    longitude,
+    allowedRadiusMeters,
+    qrToken: base.qrDisabled ? '' : String(base.qrToken || createAttendanceToken()),
+    qrDisabled: Boolean(base.qrDisabled),
+    qrTokenExpiresAt: String(input.qrTokenExpiresAt ?? input.qr_token_expires_at ?? base.qrTokenExpiresAt ?? ''),
+    createdAt: base.createdAt || new Date().toISOString(),
+    updatedAt: base.updatedAt || new Date().toISOString()
+  };
+}
+
+async function getAttendanceSchedule() {
+  try {
+    const raw = await readFile(attendanceSchedulePath, 'utf8');
+    const data = JSON.parse(raw || '{}');
+    return normalizeAttendanceScheduleInput(data);
+  } catch {
+    return { workStartsAt: '09:00', workEndsAt: '18:00' };
+  }
+}
+
+async function saveAttendanceSchedule(input) {
+  const schedule = normalizeAttendanceScheduleInput(input);
+  await writeFile(attendanceSchedulePath, JSON.stringify(schedule, null, 2));
+  return schedule;
+}
+
+function normalizeAttendanceScheduleInput(input = {}) {
+  const workStartsAt = String(input.workStartsAt || input.work_starts_at || '09:00').trim();
+  const workEndsAt = String(input.workEndsAt || input.work_ends_at || '18:00').trim();
+  const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+  return {
+    workStartsAt: timePattern.test(workStartsAt) ? workStartsAt : '09:00',
+    workEndsAt: timePattern.test(workEndsAt) ? workEndsAt : '18:00'
+  };
+}
+
+async function getAttendanceStatus(user) {
+  const [records, stores] = await Promise.all([
+    readJsonArrayFile(attendanceRecordsPath),
+    getAttendanceStores()
+  ]);
+  const openRecord = records.find((record) => record.userId === user.id && record.status === 'open') || null;
+  return {
+    status: openRecord ? 'working' : 'not_working',
+    openRecord: openRecord ? enrichAttendanceRecord(openRecord, stores) : null,
+    now: new Date().toISOString()
+  };
+}
+
+async function getAttendanceGate(user) {
+  const required = isAttendanceRequiredForUser(user);
+  const openRecord = required ? await getOpenAttendanceRecord(user) : null;
+  return {
+    required,
+    allowed: !required || Boolean(openRecord),
+    status: openRecord ? 'working' : 'not_working',
+    openRecord: openRecord ? enrichAttendanceRecord(openRecord, await getAttendanceStores()) : null,
+    attendanceUrl: '/attendance.html'
+  };
+}
+
+async function getOpenAttendanceRecord(user) {
+  const records = await readJsonArrayFile(attendanceRecordsPath);
+  return records.find((record) => record.userId === user.id && record.status === 'open') || null;
+}
+
+function isAttendanceRequiredForUser(user) {
+  return ['manager', 'seller', 'logistics', 'accountant', 'employee'].includes(user?.role);
+}
+
+async function shouldBlockByAttendanceGate(pathname, user) {
+  if (!isAttendanceRequiredForUser(user)) return false;
+  if (isAttendanceGateAllowedPath(pathname)) return false;
+  return !(await getOpenAttendanceRecord(user));
+}
+
+function isAttendanceGateAllowedPath(pathname) {
+  return pathname === '/api/crm/session'
+    || pathname === '/api/crm/login'
+    || pathname === '/api/crm/logout'
+    || pathname === '/api/crm/login-users'
+    || pathname.startsWith('/api/attendance/');
+}
+
+async function markAttendanceShift(user, input, req, expectedAction) {
+  const storeId = String(input.storeId || input.store_id || '').trim();
+  const latitude = Number(input.latitude);
+  const longitude = Number(input.longitude);
+  const deviceInfo = String(input.device_info || input.deviceInfo || req.headers['user-agent'] || '').slice(0, 500);
+  const ipAddress = getRequestIp(req);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    await saveAttendanceEvent({ user, type: 'failed_attempt', success: false, reason: 'Для отметки прихода/ухода необходимо разрешить доступ к геолокации.', latitude: null, longitude: null, deviceInfo, ipAddress });
+    throw httpError(400, 'Для отметки прихода/ухода необходимо разрешить доступ к геолокации.');
+  }
+
+  const stores = await getAttendanceStores();
+  const records = await readJsonArrayFile(attendanceRecordsPath);
+  const openRecordIndex = records.findIndex((record) => record.userId === user.id && record.status === 'open');
+  const openRecord = openRecordIndex >= 0 ? records[openRecordIndex] : null;
+  const store = expectedAction === 'check_out'
+    ? stores.find((entry) => entry.id === (openRecord?.storeId || storeId))
+    : stores.find((entry) => entry.id === storeId);
+
+  if (expectedAction === 'check_in' && openRecord) throw httpError(400, 'Смена уже открыта.');
+  if (expectedAction === 'check_out' && !openRecord) throw httpError(400, 'Открытая смена не найдена.');
+  if (!store) throw httpError(400, 'Рабочая точка не найдена.');
+
+  const userBranches = normalizeCrmBranches(user.branches);
+  if (store.branch && userBranches.length && !userBranches.includes(store.branch) && !['admin', 'owner'].includes(user.role)) {
+    await saveAttendanceEvent({ user, store, type: 'failed_attempt', success: false, reason: 'У сотрудника нет доступа к этой рабочей точке.', latitude, longitude, deviceInfo, ipAddress });
+    throw httpError(403, 'У сотрудника нет доступа к этой рабочей точке.');
+  }
+
+  const distanceMeters = Math.round(haversineDistanceMeters(latitude, longitude, store.latitude, store.longitude) * 10) / 10;
+  if (!Number.isFinite(distanceMeters) || distanceMeters > Number(store.allowedRadiusMeters || ATTENDANCE_DEFAULT_RADIUS_METERS)) {
+    await saveAttendanceEvent({ user, store, type: 'failed_attempt', success: false, reason: 'Вы слишком далеко от рабочей точки. Отметка невозможна.', latitude, longitude, distanceMeters, deviceInfo, ipAddress });
+    throw httpError(403, 'Вы слишком далеко от рабочей точки. Отметка невозможна.', { distanceMeters });
+  }
+
+  const now = new Date().toISOString();
+  let record;
+  if (expectedAction === 'check_out') {
+    record = {
+      ...openRecord,
+      checkOutTime: now,
+      checkOutLatitude: latitude,
+      checkOutLongitude: longitude,
+      checkOutDistanceMeters: distanceMeters,
+      totalWorkMinutes: openRecord.excludeFromWorkTime ? 0 : calculateWorkMinutes(openRecord.checkInTime, now),
+      status: 'closed',
+      updatedAt: now
+    };
+    records[openRecordIndex] = record;
+  } else {
+    record = {
+      id: randomUUID(),
+      userId: user.id,
+      userName: user.name || user.login || '',
+      storeId: store.id,
+      storeName: store.name,
+      checkInTime: now,
+      checkOutTime: '',
+      checkInLatitude: latitude,
+      checkInLongitude: longitude,
+      checkOutLatitude: null,
+      checkOutLongitude: null,
+      checkInDistanceMeters: distanceMeters,
+      checkOutDistanceMeters: null,
+      totalWorkMinutes: 0,
+      status: 'open',
+      source: 'geo',
+      excludeFromWorkTime: false,
+      deviceInfo,
+      ipAddress,
+      createdAt: now,
+      updatedAt: now
+    };
+    records.push(record);
+  }
+
+  await writeJsonArrayFile(attendanceRecordsPath, records);
+  await saveAttendanceEvent({ user, store, type: expectedAction, success: true, reason: '', latitude, longitude, distanceMeters, deviceInfo, ipAddress });
+
+  return {
+    ok: true,
+    action: expectedAction,
+    message: expectedAction === 'check_in' ? 'Смена открыта.' : 'Смена завершена.',
+    status: expectedAction === 'check_in' ? 'working' : 'not_working',
+    record: enrichAttendanceRecord(record, stores),
+    store: sanitizeAttendanceStore(store),
+    distanceMeters
+  };
+}
+
+async function scanAttendanceQr(user, input, req) {
+  const qrToken = String(input.qr_token || input.qrToken || input.token || '').trim();
+  const latitude = Number(input.latitude);
+  const longitude = Number(input.longitude);
+  const deviceInfo = String(input.device_info || input.deviceInfo || req.headers['user-agent'] || '').slice(0, 500);
+  const ipAddress = getRequestIp(req);
+
+  if (!qrToken) {
+    await saveAttendanceEvent({ user, type: 'failed_attempt', success: false, reason: 'QR-код недействителен или устарел.', latitude, longitude, deviceInfo, ipAddress });
+    throw httpError(400, 'QR-код недействителен или устарел.');
+  }
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    await saveAttendanceEvent({ user, type: 'failed_attempt', success: false, reason: 'Для отметки прихода/ухода необходимо разрешить доступ к геолокации.', latitude: null, longitude: null, deviceInfo, ipAddress });
+    throw httpError(400, 'Для отметки прихода/ухода необходимо разрешить доступ к геолокации.');
+  }
+
+  const stores = await getAttendanceStores();
+  const store = stores.find((entry) => entry.qrToken === qrToken);
+  if (!store || store.qrDisabled || (store.qrTokenExpiresAt && new Date(store.qrTokenExpiresAt).getTime() <= Date.now())) {
+    await saveAttendanceEvent({ user, type: 'failed_attempt', success: false, reason: 'QR-код недействителен или устарел.', latitude, longitude, deviceInfo, ipAddress });
+    throw httpError(400, 'QR-код недействителен или устарел.');
+  }
+
+  const userBranches = normalizeCrmBranches(user.branches);
+  if (store.branch && userBranches.length && !userBranches.includes(store.branch) && !['admin', 'owner'].includes(user.role)) {
+    await saveAttendanceEvent({ user, store, type: 'failed_attempt', success: false, reason: 'У сотрудника нет доступа к этой рабочей точке.', latitude, longitude, deviceInfo, ipAddress });
+    throw httpError(403, 'У сотрудника нет доступа к этой рабочей точке.');
+  }
+
+  const distanceMeters = Math.round(haversineDistanceMeters(latitude, longitude, store.latitude, store.longitude) * 10) / 10;
+  if (!Number.isFinite(distanceMeters) || distanceMeters > Number(store.allowedRadiusMeters || ATTENDANCE_DEFAULT_RADIUS_METERS)) {
+    await saveAttendanceEvent({ user, store, type: 'failed_attempt', success: false, reason: 'Вы слишком далеко от рабочей точки. Отметка невозможна.', latitude, longitude, distanceMeters, deviceInfo, ipAddress });
+    throw httpError(403, 'Вы слишком далеко от рабочей точки. Отметка невозможна.', { distanceMeters });
+  }
+
+  const records = await readJsonArrayFile(attendanceRecordsPath);
+  const openRecordIndex = records.findIndex((record) => record.userId === user.id && record.status === 'open');
+  const lastEvent = (await readJsonArrayFile(attendanceEventsPath))
+    .filter((event) => event.userId === user.id && event.success)
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))[0];
+  if (lastEvent && Date.now() - new Date(lastEvent.createdAt).getTime() < ATTENDANCE_MIN_SCAN_INTERVAL_MS) {
+    await saveAttendanceEvent({ user, store, type: 'failed_attempt', success: false, reason: 'Повторное сканирование слишком быстро. Подождите 30 секунд.', latitude, longitude, distanceMeters, deviceInfo, ipAddress });
+    throw httpError(429, 'Повторное сканирование слишком быстро. Подождите 30 секунд.');
+  }
+
+  const now = new Date().toISOString();
+  let action;
+  let record;
+  if (openRecordIndex >= 0) {
+    record = {
+      ...records[openRecordIndex],
+      checkOutTime: now,
+      checkOutLatitude: latitude,
+      checkOutLongitude: longitude,
+      checkOutDistanceMeters: distanceMeters,
+      totalWorkMinutes: records[openRecordIndex].excludeFromWorkTime ? 0 : calculateWorkMinutes(records[openRecordIndex].checkInTime, now),
+      status: 'closed',
+      updatedAt: now
+    };
+    records[openRecordIndex] = record;
+    action = 'check_out';
+  } else {
+    record = {
+      id: randomUUID(),
+      userId: user.id,
+      userName: user.name || user.login || '',
+      storeId: store.id,
+      storeName: store.name,
+      checkInTime: now,
+      checkOutTime: '',
+      checkInLatitude: latitude,
+      checkInLongitude: longitude,
+      checkOutLatitude: null,
+      checkOutLongitude: null,
+      checkInDistanceMeters: distanceMeters,
+      checkOutDistanceMeters: null,
+      totalWorkMinutes: 0,
+      status: 'open',
+      source: 'qr',
+      excludeFromWorkTime: false,
+      deviceInfo,
+      ipAddress,
+      createdAt: now,
+      updatedAt: now
+    };
+    records.push(record);
+    action = 'check_in';
+  }
+  await writeJsonArrayFile(attendanceRecordsPath, records);
+  await saveAttendanceEvent({ user, store, type: action, success: true, reason: '', latitude, longitude, distanceMeters, deviceInfo, ipAddress });
+
+  return {
+    ok: true,
+    action,
+    message: action === 'check_in' ? 'Вы успешно отметили приход.' : 'Вы успешно отметили уход.',
+    status: action === 'check_in' ? 'working' : 'not_working',
+    record: enrichAttendanceRecord(record, stores),
+    store: sanitizeAttendanceStore(store),
+    distanceMeters
+  };
+}
+
+async function adminOpenAttendanceShift(input, actor) {
+  const stores = await getAttendanceStores();
+  const users = await getAttendanceReportUsers();
+  const userId = String(input.userId || input.user_id || '').trim();
+  const storeId = String(input.storeId || input.store_id || '').trim();
+  const targetUser = users.find((user) => String(user.id) === userId);
+  const store = stores.find((item) => item.id === storeId) || stores[0];
+  if (!targetUser) throw httpError(400, 'Выберите сотрудника.');
+  if (!store) throw httpError(400, 'Выберите рабочую точку.');
+  const records = await readJsonArrayFile(attendanceRecordsPath);
+  const openRecord = records.find((record) => record.userId === targetUser.id && record.status === 'open');
+  if (openRecord) return enrichAttendanceRecord(openRecord, stores);
+  const now = new Date().toISOString();
+  const record = {
+    id: randomUUID(),
+    userId: targetUser.id,
+    userName: targetUser.name || '',
+    storeId: store.id,
+    storeName: store.name,
+    checkInTime: now,
+    checkOutTime: '',
+    checkInLatitude: null,
+    checkInLongitude: null,
+    checkOutLatitude: null,
+    checkOutLongitude: null,
+    checkInDistanceMeters: null,
+    checkOutDistanceMeters: null,
+    totalWorkMinutes: 0,
+    status: 'open',
+    source: 'admin',
+    excludeFromWorkTime: true,
+    openedByUserId: actor?.id || '',
+    openedByUserName: actor?.name || actor?.login || '',
+    deviceInfo: 'admin-open',
+    ipAddress: '',
+    createdAt: now,
+    updatedAt: now
+  };
+  records.push(record);
+  await writeJsonArrayFile(attendanceRecordsPath, records);
+  return enrichAttendanceRecord(record, stores);
+}
+
+async function autoCloseAttendanceShifts() {
+  const [records, stores] = await Promise.all([
+    readJsonArrayFile(attendanceRecordsPath),
+    getAttendanceStores()
+  ]);
+  let changed = false;
+  const now = new Date();
+  for (const record of records) {
+    if (record.status !== 'open') continue;
+    const store = stores.find((item) => item.id === record.storeId);
+    const closeTime = getAttendanceAutoCloseTime(record.checkInTime, store);
+    if (!closeTime || now.getTime() < closeTime.getTime()) continue;
+    record.checkOutTime = closeTime.toISOString();
+    record.checkOutLatitude = null;
+    record.checkOutLongitude = null;
+    record.checkOutDistanceMeters = null;
+    record.totalWorkMinutes = record.excludeFromWorkTime ? 0 : calculateWorkMinutes(record.checkInTime, record.checkOutTime);
+    record.status = 'closed';
+    record.autoClosed = true;
+    record.updatedAt = new Date().toISOString();
+    changed = true;
+  }
+  if (changed) await writeJsonArrayFile(attendanceRecordsPath, records);
+}
+
+function getAttendanceAutoCloseTime(checkInTime, store) {
+  const start = new Date(checkInTime);
+  if (!Number.isFinite(start.getTime())) return null;
+  const branch = store?.branch || '';
+  const [hours, minutes] = branch === 'besh' ? [19, 30] : [18, 30];
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bishkek',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(start);
+  return new Date(`${date}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00+06:00`);
+}
+
+async function getAttendanceReport(input, user) {
+  const [records, events, stores, users] = await Promise.all([
+    readJsonArrayFile(attendanceRecordsPath),
+    readJsonArrayFile(attendanceEventsPath),
+    getAttendanceStores(),
+    getAttendanceReportUsers()
+  ]);
+  const dateFrom = normalizeAttendanceDate(input.dateFrom, 'from');
+  const dateTo = normalizeAttendanceDate(input.dateTo, 'to');
+  const allowedBranches = normalizeCrmBranches(user.branches);
+  const canSeeAll = ['admin', 'owner'].includes(user.role);
+
+  const canSeeRecord = (entry) => {
+    const store = stores.find((item) => item.id === entry.storeId);
+    if (!canSeeAll && store?.branch && allowedBranches.length && !allowedBranches.includes(store.branch)) return false;
+    return canSeeAll || user.role === 'manager' || entry.userId === user.id;
+  };
+
+  const visibleRecords = records
+    .filter((record) => {
+      const time = new Date(record.checkInTime || record.createdAt).getTime();
+      if (dateFrom && time < dateFrom) return false;
+      if (dateTo && time > dateTo) return false;
+      if (input.userId && record.userId !== input.userId) return false;
+      if (input.storeId && record.storeId !== input.storeId) return false;
+      return canSeeRecord(record);
+    })
+    .sort((left, right) => new Date(right.checkInTime) - new Date(left.checkInTime))
+    .map((record) => enrichAttendanceRecord(record, stores));
+
+  const visibleEvents = events
+    .filter((event) => {
+      const time = new Date(event.createdAt).getTime();
+      if (dateFrom && time < dateFrom) return false;
+      if (dateTo && time > dateTo) return false;
+      if (input.userId && event.userId !== input.userId) return false;
+      if (input.storeId && event.storeId !== input.storeId) return false;
+      return canSeeRecord(event);
+    })
+    .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
+    .slice(0, 300);
+
+  const totalWorkMinutes = visibleRecords.reduce((sum, record) => sum + Number(record.totalWorkMinutes || 0), 0);
+  const schedule = await getAttendanceSchedule();
+  const lateMinutes = visibleRecords.reduce((sum, record) => sum + calculateLateMinutes(record.checkInTime, schedule.workStartsAt), 0);
+  return {
+    rows: visibleRecords,
+    events: visibleEvents,
+    stores: stores.map(sanitizeAttendanceStore),
+    users: users.filter((entry) => canSeeAll || user.role === 'manager' || entry.id === user.id),
+    totals: {
+      records: visibleRecords.length,
+      open: visibleRecords.filter((record) => record.status === 'open').length,
+      failedAttempts: visibleEvents.filter((event) => !event.success).length,
+      totalWorkMinutes,
+      lateMinutes
+    },
+    schedule
+  };
+}
+
+async function getAttendanceReportUsers() {
+  try {
+    const rows = await getManagedCrmUsers();
+    return rows.map((user) => ({ id: user.id, name: user.name, role: user.role, branches: user.branches }));
+  } catch {
+    return getLegacyCrmUsers().map((user) => ({ id: `legacy:${user.login}`, name: user.name, role: user.role, branches: ['ayu', 'besh'] }));
+  }
+}
+
+async function saveAttendanceEvent({ user, store = null, type, success, reason, latitude, longitude, distanceMeters = null, deviceInfo, ipAddress }) {
+  const events = await readJsonArrayFile(attendanceEventsPath);
+  const event = {
+    id: randomUUID(),
+    userId: user?.id || '',
+    userName: user?.name || user?.login || '',
+    storeId: store?.id || '',
+    storeName: store?.name || '',
+    type,
+    latitude: Number.isFinite(Number(latitude)) ? Number(latitude) : null,
+    longitude: Number.isFinite(Number(longitude)) ? Number(longitude) : null,
+    distanceMeters: Number.isFinite(Number(distanceMeters)) ? Number(distanceMeters) : null,
+    success: Boolean(success),
+    reason: reason || '',
+    deviceInfo: String(deviceInfo || '').slice(0, 500),
+    ipAddress: String(ipAddress || '').slice(0, 120),
+    createdAt: new Date().toISOString()
+  };
+  events.push(event);
+  await writeJsonArrayFile(attendanceEventsPath, events.slice(-5000));
+  return event;
+}
+
+function enrichAttendanceRecord(record, stores = []) {
+  const store = stores.find((entry) => entry.id === record.storeId);
+  return {
+    ...record,
+    storeName: record.storeName || store?.name || '',
+    store: store ? sanitizeAttendanceStore(store) : null,
+    currentWorkMinutes: record.excludeFromWorkTime ? 0 : record.status === 'open' ? calculateWorkMinutes(record.checkInTime, new Date().toISOString()) : Number(record.totalWorkMinutes || 0)
+  };
+}
+
+function sanitizeAttendanceStore(store) {
+  return {
+    id: store.id,
+    name: store.name,
+    branch: store.branch,
+    address: store.address,
+    latitude: store.latitude,
+    longitude: store.longitude,
+    allowedRadiusMeters: store.allowedRadiusMeters,
+    qrToken: store.qrToken,
+    qrDisabled: Boolean(store.qrDisabled),
+    qrTokenExpiresAt: store.qrTokenExpiresAt,
+    qrUrl: store.qrToken ? `/attendance.html?token=${encodeURIComponent(store.qrToken)}` : ''
+  };
+}
+
+function calculateLateMinutes(checkInTime, workStartsAt) {
+  const checkedIn = new Date(checkInTime);
+  if (!Number.isFinite(checkedIn.getTime())) return 0;
+  const [hours, minutes] = String(workStartsAt || '09:00').split(':').map(Number);
+  const planned = new Date(checkedIn);
+  planned.setHours(Number.isFinite(hours) ? hours : 9, Number.isFinite(minutes) ? minutes : 0, 0, 0);
+  return Math.max(0, Math.round((checkedIn.getTime() - planned.getTime()) / 60_000));
+}
+
+function calculateWorkMinutes(checkInTime, checkOutTime) {
+  const start = new Date(checkInTime).getTime();
+  const end = new Date(checkOutTime).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return Math.round((end - start) / 60_000);
+}
+
+function haversineDistanceMeters(lat1, lon1, lat2, lon2) {
+  const earthRadius = 6371000;
+  const toRadians = (value) => Number(value) * Math.PI / 180;
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function createAttendanceToken() {
+  return randomBytes(24).toString('base64url');
+}
+
+function normalizeAttendanceDate(value, side) {
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) throw httpError(400, 'Дата должна быть в формате YYYY-MM-DD.');
+  const time = side === 'to' ? '23:59:59.999' : '00:00:00.000';
+  return new Date(`${raw}T${time}+06:00`).getTime();
+}
+
+function normalizeAttendanceBranchKey(value) {
+  const normalized = String(value || '').trim().toLocaleLowerCase('ru');
+  if (normalized === 'ayu' || normalized.includes('аю')) return 'ayu';
+  if (normalized === 'besh' || normalized.includes('беш')) return 'besh';
+  return normalized.slice(0, 40);
+}
+
+function getRequestIp(req) {
+  return String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+}
+
+async function readJsonArrayFile(filePath) {
+  try {
+    const content = await readFile(filePath, 'utf8');
+    const rows = JSON.parse(content);
+    return Array.isArray(rows) ? rows : [];
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function writeJsonArrayFile(filePath, rows) {
+  await mkdir(dataDir, { recursive: true });
+  await writeFile(filePath, JSON.stringify(rows, null, 2), 'utf8');
 }
 
 function validateTelegramReceiptInput(receiptPhoto) {
@@ -5780,15 +6725,15 @@ function setReportSession(res, login) {
   res.setHeader('Set-Cookie', `${reportCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200`);
 }
 
-const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'reconciliation', 'whatsappBroadcast', 'priceFormula', 'customsCalculator', 'bankCommissions', 'audit', 'users', 'about'];
+const crmPermissionNames = ['sales', 'debtSale', 'deliveries', 'attendance', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'reconciliation', 'whatsappBroadcast', 'priceFormula', 'customsCalculator', 'bankCommissions', 'audit', 'users', 'about'];
 const crmRolePermissions = {
   admin: [...crmPermissionNames],
   owner: [...crmPermissionNames],
-  manager: ['sales', 'debtSale', 'deliveries', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'reconciliation', 'whatsappBroadcast', 'customsCalculator', 'bankCommissions', 'about'],
-  seller: ['sales', 'debtSale', 'deliveries', 'reports', 'commercialDocuments', 'about'],
-  logistics: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about'],
-  accountant: ['reports', 'expenses', 'payroll', 'reconciliation', 'priceFormula', 'customsCalculator', 'bankCommissions', 'about'],
-  employee: ['sales', 'debtSale', 'deliveries', 'commercialDocuments', 'about']
+  manager: ['sales', 'debtSale', 'deliveries', 'attendance', 'reports', 'reportProfit', 'expenses', 'payroll', 'commercialDocuments', 'reconciliation', 'whatsappBroadcast', 'customsCalculator', 'bankCommissions', 'about'],
+  seller: ['sales', 'debtSale', 'deliveries', 'attendance', 'reports', 'commercialDocuments', 'about'],
+  logistics: ['sales', 'debtSale', 'deliveries', 'attendance', 'commercialDocuments', 'about'],
+  accountant: ['attendance', 'reports', 'expenses', 'payroll', 'reconciliation', 'priceFormula', 'customsCalculator', 'bankCommissions', 'about'],
+  employee: ['attendance', 'about']
 };
 
 function getLegacyCrmUsers() {
@@ -6395,8 +7340,9 @@ function getMoySkladBranchConfigs() {
 
 function normalizeCrmPermissions(role, permissions) {
   if (role === 'admin' || role === 'owner') return [...crmPermissionNames];
-  const values = Array.isArray(permissions) && permissions.length ? permissions : crmRolePermissions[role] || [];
+  const values = [...(Array.isArray(permissions) && permissions.length ? permissions : crmRolePermissions[role] || [])];
   if (role === 'seller' && !values.includes('reports')) values.push('reports');
+  if (isAttendanceRequiredForUser({ role }) && !values.includes('attendance')) values.push('attendance');
   return [...new Set(values.filter((value) => crmPermissionNames.includes(value)))];
 }
 

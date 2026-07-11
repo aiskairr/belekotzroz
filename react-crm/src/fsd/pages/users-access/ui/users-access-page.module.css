@@ -1,0 +1,221 @@
+.page {
+  display: grid;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header h1,
+.editor h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.listPanel,
+.editor {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.listPanel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.filters {
+  display: grid;
+  gap: 8px;
+}
+
+.filters input,
+.filters select,
+.formGrid input,
+.formGrid select,
+.passwordRow input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #121019;
+  padding: 8px 10px;
+  color: var(--text);
+}
+
+.userList {
+  display: grid;
+  gap: 8px;
+}
+
+.userRow {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel-muted);
+  padding: 10px;
+  color: var(--text);
+  text-align: left;
+}
+
+.userRow span,
+.userRow small,
+.editorHeader span {
+  color: var(--muted);
+}
+
+.selected {
+  border-color: var(--primary);
+  background: rgba(124, 156, 255, 0.14);
+}
+
+.editor {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.editorHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.editorActions {
+  display: flex;
+  gap: 8px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.formGrid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.passwordRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.passwordRow button,
+.primaryButton,
+.secondaryButton {
+  min-height: 38px;
+  border-radius: 12px;
+  padding: 0 12px;
+  font-weight: 700;
+}
+
+.primaryButton {
+  border: 0;
+  background: #f5f1ff;
+  color: #17141f;
+}
+
+.primaryButton:hover {
+  background: var(--primary-strong);
+}
+
+.secondaryButton,
+.passwordRow button {
+  border: 1px solid var(--border);
+  background: #121019;
+  color: var(--text);
+}
+
+.checkColumns {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.checkColumns fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 12px;
+}
+
+.checkColumns legend {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sectionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  font-size: 14px;
+}
+
+.activeToggle {
+  display: flex !important;
+  min-height: 38px;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--text) !important;
+}
+
+.activeToggle input {
+  width: auto !important;
+  min-height: auto !important;
+}
+
+@media (max-width: 1120px) {
+  .grid,
+  .checkColumns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .editorHeader,
+  .editorActions {
+    display: grid;
+  }
+
+  .formGrid,
+  .sectionsGrid,
+  .passwordRow {
+    grid-template-columns: 1fr;
+  }
+}

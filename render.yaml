@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: mysrs-backend
+    runtime: node
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/status
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: MOYSKLAD_TOKEN
+        sync: false
+      - key: MOYSKLAD_COOKIE
+        sync: false
+      - key: MOYSKLAD_WEB_COOKIE
+        sync: false
+      - key: REPORT_LOGIN
+        sync: false
+      - key: REPORT_PASSWORD
+        sync: false
+      - key: REPORT_SESSION_SECRET
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_RECEIPT_CHAT_ID
+        sync: false
+
+  - type: web
+    name: ordo-crm
+    runtime: node
+    rootDir: react-crm
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: ORDO_BACKEND_URL
+        sync: false
