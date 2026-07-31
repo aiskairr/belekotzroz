@@ -179,6 +179,7 @@ tr[data-debtor-id]:hover { background: #f3f7ff; }
   font-weight: 850;
 }
 .type-badge.legal { background: #ecfdf3; color: #047857; }
+.type-badge.entrepreneur { background: #eff6ff; color: #1d4ed8; }
 .debt-value { color: #b42318; font-weight: 900; }
 .empty { padding: 28px; text-align: center; color: #667085; }
 
@@ -381,6 +382,7 @@ body[data-mode="dark"] .rc-modal { background: rgba(2, 6, 23, .72); }
 body[data-mode="dark"] .debt-value { color: #fca5a5; }
 body[data-mode="dark"] .type-badge { background: rgba(37, 99, 235, .18); color: #bfdbfe; }
 body[data-mode="dark"] .type-badge.legal { background: rgba(16, 185, 129, .16); color: #a7f3d0; }
+body[data-mode="dark"] .type-badge.entrepreneur { background: rgba(37, 99, 235, .18); color: #bfdbfe; }
 body[data-mode="dark"] .rc-act-document,
 body[data-mode="dark"] .rc-act-document h3,
 body[data-mode="dark"] .rc-act-subtitle,

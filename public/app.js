@@ -62,6 +62,10 @@ const settingsModal = document.querySelector('#settingsModal');
 const openSettingsButton = document.querySelector('#openSettingsButton');
 const topSettingsButton = document.querySelector('#topSettingsButton');
 const closeSettingsButton = document.querySelector('#closeSettingsButton');
+const saleAttendanceSettings = document.querySelector('#saleAttendanceSettings');
+const saleAttendanceStatus = document.querySelector('#saleAttendanceStatus');
+const saleAttendanceTime = document.querySelector('#saleAttendanceTime');
+const saleCloseShiftButton = document.querySelector('#saleCloseShiftButton');
 const sidebarToggle = document.querySelector('#sidebarToggle');
 const processSteps = [...document.querySelectorAll('.process-steps span')];
 const debtSaleMode = window.location.pathname === '/debt-sale.html';
@@ -263,9 +267,14 @@ function renderCrmNavigation() {
   if (!nav) return;
   const activePage = debtSaleMode ? 'debtSale' : 'sales';
   nav.innerHTML = navigation
-    .filter((item) => hasCrmPermission(item.permission))
+    .filter((item) => hasCrmPermission(item.permission) && shouldShowCrmNavItem(item))
     .map((item) => `<a id="${item.id}NavLink" class="${item.id === activePage ? 'active' : ''}" href="${item.href}" data-permission="${item.permission}">${escapeHtml(item.label)}</a>`)
     .join('');
+}
+
+function shouldShowCrmNavItem(item) {
+  if (item.id !== 'attendance') return true;
+  return ['admin', 'owner', 'manager'].includes(currentCrmUser?.role);
 }
 
 async function boot() {
@@ -277,11 +286,17 @@ async function boot() {
     appPreloader.classList.add('hidden');
     return;
   }
-  await enterCrm(session.user);
+  await enterCrm(session.user, session.attendance);
 }
 
-async function enterCrm(user) {
+async function enterCrm(user, attendance = null) {
   currentCrmUser = user;
+  const requestedPage = getRequestedPage();
+  if (isAttendanceBlocked(attendance)) {
+    const next = encodeURIComponent(requestedPage || window.location.pathname + window.location.search);
+    window.location.replace(`/attendance.html?next=${next}`);
+    return;
+  }
   document.body.dataset.role = user.role;
   await loadUserUiSettings();
   applyUiSettings();
@@ -290,7 +305,6 @@ async function enterCrm(user) {
   applyRoleAccess(user);
   startMoySkladMonitor();
   crmLoginScreen.classList.add('hidden');
-  const requestedPage = getRequestedPage();
   const requiredPermission = debtSaleMode ? 'debtSale' : 'sales';
   if (!hasCrmPermission(requiredPermission)) {
     window.location.href = requestedPage || getDefaultCrmPage(user);
@@ -347,11 +361,15 @@ function bindLogin() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Не удалось войти.');
       crmLoginStatus.textContent = '';
-      await enterCrm(data.user);
+      await enterCrm(data.user, data.attendance);
     } catch (error) {
       crmLoginStatus.textContent = error.message;
     }
   });
+}
+
+function isAttendanceBlocked(attendance) {
+  return attendance?.required && !attendance.allowed;
 }
 
 async function initializeSalesApp() {
@@ -1820,6 +1838,7 @@ async function updateCalculation() {
 function bindCrmShell() {
   const openSettings = () => {
     syncSettingsControls();
+    refreshSaleAttendanceSettings();
     settingsModal.classList.remove('hidden');
   };
   openSettingsButton?.addEventListener('click', openSettings);
@@ -1870,6 +1889,10 @@ function bindCrmShell() {
     await fetch('/api/crm/logout', { method: 'POST' }).catch(() => {});
     window.location.reload();
   });
+  saleCloseShiftButton?.addEventListener('click', () => {
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/attendance.html?close=1&next=${next}`;
+  });
   clearDraftButton?.addEventListener('click', () => {
     if (!window.confirm('Удалить сохраненный черновик продажи?')) return;
     clearDraft();
@@ -1877,6 +1900,29 @@ function bindCrmShell() {
   });
   switchBranchButton?.addEventListener('click', openBranchSelection);
   branchCancelButton?.addEventListener('click', closeBranchSelection);
+}
+
+async function refreshSaleAttendanceSettings() {
+  const required = ['manager', 'seller', 'logistics', 'accountant', 'employee'].includes(currentCrmUser?.role);
+  saleAttendanceSettings?.classList.toggle('hidden', !required);
+  if (!required) return;
+  try {
+    const response = await fetch('/api/attendance/status');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Не удалось загрузить смену.');
+    const working = data.status === 'working';
+    saleAttendanceStatus.textContent = working ? 'На работе' : 'Смена не открыта';
+    saleAttendanceTime.textContent = working ? formatAttendanceDuration(data.openRecord?.currentWorkMinutes || 0) : '0ч 0м';
+    saleCloseShiftButton?.classList.toggle('hidden', !working);
+  } catch (error) {
+    saleAttendanceStatus.textContent = error.message;
+    saleAttendanceTime.textContent = '';
+  }
+}
+
+function formatAttendanceDuration(minutes) {
+  const value = Math.max(0, Number(minutes) || 0);
+  return `${Math.floor(value / 60)}ч ${value % 60}м`;
 }
 
 function readLocalUiSettingsRaw() {

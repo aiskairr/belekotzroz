@@ -19,6 +19,7 @@ const permissions = {
   sales: 'Продажи',
   debtSale: 'Продажа в долг',
   deliveries: 'Доставки',
+  attendance: 'Посещаемость',
   reports: 'Отчетность',
   bankCommissions: 'Банковские комиссии',
   reportProfit: 'Показывать прибыль в отчетности',

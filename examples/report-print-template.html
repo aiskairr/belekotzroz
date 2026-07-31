@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Образец печати отчётности</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #eef1f6;
+        color: #111;
+        font-family: Arial, sans-serif;
+      }
+
+      .template-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        max-width: 1100px;
+        margin: 24px auto 0;
+        border-radius: 12px;
+        background: #fff;
+        padding: 16px 20px;
+        box-shadow: 0 10px 30px rgb(24 39 75 / 10%);
+      }
+
+      .template-toolbar h1 {
+        margin: 0 0 4px;
+        font-size: 18px;
+      }
+
+      .template-toolbar p {
+        margin: 0;
+        color: #5b6475;
+        font-size: 13px;
+      }
+
+      .template-toolbar button {
+        flex: 0 0 auto;
+        border: 0;
+        border-radius: 9px;
+        background: #233a9f;
+        padding: 11px 18px;
+        color: #fff;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .print-report {
+        max-width: 1100px;
+        margin: 20px auto 40px;
+        background: #fff;
+        padding: 8mm;
+        box-shadow: 0 10px 30px rgb(24 39 75 / 12%);
+      }
+
+      .print-sheet {
+        color: #111;
+        font-family: Arial, sans-serif;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }
+
+      .print-sheet h1 {
+        margin: 0 0 8px;
+        text-align: center;
+        font-size: 22px;
+      }
+
+      .print-sheet > p {
+        margin: 0 0 14px;
+        text-align: center;
+      }
+
+      .print-payment-summary {
+        margin: 0 0 14px;
+        border: 1px solid #2f2f2f;
+      }
+
+      .print-payment-summary h2 {
+        margin: 0;
+        background: #c9c9c9 !important;
+        padding: 7px 10px;
+        font-size: 13px;
+        text-align: left;
+      }
+
+      .print-payment-summary > div {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .print-payment-summary p {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin: 0;
+        border-top: 1px solid #2f2f2f;
+        border-right: 1px solid #2f2f2f;
+        padding: 6px 8px;
+        text-align: left;
+      }
+
+      .print-sheet table {
+        min-width: 0;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 10.5px;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }
+
+      .print-sheet thead,
+      .print-sheet tfoot {
+        display: table-row-group;
+      }
+
+      .print-sheet th,
+      .print-sheet td {
+        border: 1px solid #2f2f2f;
+        padding: 6px 5px;
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+      }
+
+      .print-sheet th {
+        background: #c9c9c9 !important;
+        color: #111 !important;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .report-document-row td {
+        background: #233a9f !important;
+        color: #fff !important;
+        font-weight: 800;
+        vertical-align: middle;
+      }
+
+      .report-product-row td {
+        background: #fff !important;
+        color: #111 !important;
+        font-weight: 500;
+      }
+
+      .report-product-row td:nth-child(2) {
+        font-weight: 800;
+      }
+
+      .print-sheet tfoot td {
+        background: #f0f0f0 !important;
+        font-weight: 800;
+      }
+
+      @media (max-width: 900px) {
+        .template-toolbar {
+          align-items: stretch;
+          flex-direction: column;
+          margin: 12px;
+        }
+
+        .print-report {
+          overflow-x: auto;
+          margin: 12px;
+        }
+      }
+
+      @media print {
+        html,
+        body {
+          width: 100%;
+          min-height: 0;
+          margin: 0;
+          background: #fff;
+          padding: 0;
+        }
+
+        body > *:not(.print-report) {
+          display: none !important;
+        }
+
+        .print-report {
+          position: static;
+          display: block;
+          width: 100%;
+          max-width: none;
+          margin: 0;
+          padding: 0;
+          box-shadow: none;
+        }
+
+        .print-sheet table {
+          table-layout: fixed;
+          font-size: 8.5px;
+        }
+
+        .print-sheet thead {
+          display: table-row-group;
+        }
+
+        .print-sheet th,
+        .print-sheet td {
+          padding: 4px 3px;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          line-height: 1.15;
+        }
+
+        @page {
+          margin: 7mm;
+          size: A4 landscape;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="template-toolbar">
+      <div>
+        <h1>Переносимый образец печати отчётности</h1>
+        <p>Данные ниже тестовые. Для интеграции замените объект <code>reportData</code> данными другого проекта.</p>
+      </div>
+      <button id="printButton" type="button">Печать образца</button>
+    </header>
+
+    <section id="printReport" class="print-report" aria-label="Печатный отчёт"></section>
+
+    <script>
+      /*
+       * В другом проекте оставьте эту структуру данных либо преобразуйте
+       * ответ своего API к такому формату перед вызовом renderReport().
+       */
+      const reportData = {
+        title: 'Отчёт по продажам',
+        period: '01.07.2026 - 25.07.2026',
+        showProfit: true,
+        paymentTotals: [
+          { name: 'Наличные', amount: 32450 },
+          { name: 'MBANK QR', amount: 47700 },
+          { name: 'Optima', amount: 12800 }
+        ],
+        rows: [
+          {
+            name: '00001',
+            moment: '25.07.2026 10:24',
+            amount: 38950,
+            storeName: 'Основной склад',
+            organizationName: 'ИП Матаев',
+            customerName: 'Розничный покупатель',
+            employeeName: 'Администратор',
+            netProfit: 9850,
+            comment: 'Наличные: 15000; MBANK QR: 23950',
+            paymentType: 'Смешанная оплата',
+            paid: 38950,
+            unpaid: 0,
+            typeLabel: 'Продажа',
+            products: [
+              { code: 'A-101', name: 'Товар демонстрационный №1', price: 12500, quantity: 2, sum: 25000 },
+              { code: 'A-205', name: 'Товар демонстрационный №2', price: 13950, quantity: 1, sum: 13950 }
+            ]
+          },
+          {
+            name: '00002',
+            moment: '25.07.2026 14:08',
+            amount: 54000,
+            storeName: 'Филиал №1',
+            organizationName: 'ИП Матаев',
+            customerName: 'ОсОО «Пример»',
+            employeeName: 'Менеджер',
+            netProfit: 12400,
+            comment: 'MBANK QR: 23750; Optima: 12800',
+            paymentType: 'Безналичный',
+            paid: 36550,
+            unpaid: 17450,
+            typeLabel: 'Продажа',
+            products: [
+              { code: 'B-310', name: 'Комплект товаров', price: 18000, quantity: 3, sum: 54000 }
+            ]
+          }
+        ]
+      };
+
+      const formatSom = (value) =>
+        `${new Intl.NumberFormat('ru-RU', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(Number(value) || 0)} сом`;
+
+      const formatQuantity = (value) =>
+        new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 3 }).format(Number(value) || 0);
+
+      const escapeHtml = (value) =>
+        String(value ?? '')
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#039;');
+
+      function calculateTotals(rows) {
+        return rows.reduce(
+          (totals, row) => {
+            totals.amount += Number(row.amount) || 0;
+            totals.paid += Number(row.paid) || 0;
+            totals.unpaid += Number(row.unpaid) || 0;
+            totals.netProfit += Number(row.netProfit) || 0;
+            return totals;
+          },
+          { amount: 0, paid: 0, unpaid: 0, netProfit: 0 }
+        );
+      }
+
+      function renderDocument(row, showProfit) {
+        const products = Array.isArray(row.products) && row.products.length
+          ? row.products
+          : [{ code: '', name: 'Товар', price: row.amount, quantity: 1, sum: row.amount }];
+
+        return `
+          <tr class="report-document-row">
+            <td>${escapeHtml(row.name)}</td>
+            <td>${escapeHtml(row.moment)}</td>
+            <td>${formatSom(row.amount)}</td>
+            <td>${escapeHtml(row.storeName)}</td>
+            <td colspan="2">${escapeHtml(row.organizationName)}</td>
+            <td colspan="2">${escapeHtml(row.customerName)}</td>
+            <td>${escapeHtml(row.employeeName)}</td>
+            ${showProfit ? `<td>${formatSom(row.netProfit)}</td>` : ''}
+            <td colspan="2">${escapeHtml(row.comment || row.paymentType)}</td>
+          </tr>
+          ${products.map((product) => `
+            <tr class="report-product-row">
+              <td>${escapeHtml(product.code)}</td>
+              <td colspan="${showProfit ? 4 : 3}">${escapeHtml(product.name)}</td>
+              <td>${formatSom(product.price)}</td>
+              <td>${formatQuantity(product.quantity)}</td>
+              <td>${formatSom(product.sum)}</td>
+              <td>${escapeHtml(row.paymentType)}</td>
+              <td>${formatSom(row.paid)}</td>
+              <td>${formatSom(row.unpaid)}</td>
+              <td>${escapeHtml(row.typeLabel)}</td>
+            </tr>
+          `).join('')}
+        `;
+      }
+
+      function renderReport(data) {
+        const showProfit = data.showProfit !== false;
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        const totals = calculateTotals(rows);
+        const payments = Array.isArray(data.paymentTotals) ? data.paymentTotals : [];
+
+        document.querySelector('#printReport').innerHTML = `
+          <div class="print-sheet">
+            <h1>${escapeHtml(data.title)}</h1>
+            <p>Период: ${escapeHtml(data.period)}</p>
+            <section class="print-payment-summary">
+              <h2>Оплата по банкам и способам</h2>
+              <div>
+                ${payments.length
+                  ? payments.map((item) => `
+                    <p>
+                      <span>${escapeHtml(item.name)}</span>
+                      <strong>${formatSom(item.amount)}</strong>
+                    </p>
+                  `).join('')
+                  : '<p><span>Нет данных об оплате</span><strong>0,00 сом</strong></p>'}
+              </div>
+            </section>
+            <table>
+              <thead>
+                <tr>
+                  <th>Номер</th>
+                  <th>Время</th>
+                  <th>Сумма</th>
+                  <th>Склад</th>
+                  <th colspan="2">Организация</th>
+                  <th colspan="2">Контрагент</th>
+                  <th>Сотрудник</th>
+                  ${showProfit ? '<th>Прибыль</th>' : ''}
+                  <th colspan="2">Комментарий</th>
+                </tr>
+                <tr>
+                  <th>Код</th>
+                  <th colspan="${showProfit ? 4 : 3}">Наименование товара</th>
+                  <th>Цена</th>
+                  <th>Кол-во</th>
+                  <th>Сумма</th>
+                  <th>Тип оплаты</th>
+                  <th>Оплачено</th>
+                  <th>Не оплачено</th>
+                  <th>Документ</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map((row) => renderDocument(row, showProfit)).join('')}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="2">Итого</td>
+                  <td>${formatSom(totals.amount)}</td>
+                  <td colspan="6"></td>
+                  ${showProfit ? `<td>${formatSom(totals.netProfit)}</td>` : ''}
+                  <td>${formatSom(totals.unpaid)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        `;
+      }
+
+      renderReport(reportData);
+      document.querySelector('#printButton').addEventListener('click', () => window.print());
+    </script>
+  </body>
+</html>

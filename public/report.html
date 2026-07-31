@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Отчетность продаж</title>
-    <link rel="stylesheet" href="/report.css?v=20260626-dark-fix-2">
+    <link rel="stylesheet" href="/report.css?v=20260725-print-header-once">
     <link rel="stylesheet" href="/crm-shell.css?v=20260706-unified-sidebar">
   </head>
   <body>
@@ -23,6 +23,12 @@
           </button>
           <button type="button" data-report-type="demand">
             <span>Отгрузки</span><strong id="demandsTabCount">0</strong>
+          </button>
+          <button type="button" data-report-type="retailsalesreturn">
+            <span>Возвраты продаж</span><strong id="salesReturnsTabCount">0</strong>
+          </button>
+          <button type="button" data-report-type="salesreturn">
+            <span>Возвраты отгрузок</span><strong id="demandReturnsTabCount">0</strong>
           </button>
         </nav>
 
@@ -94,6 +100,6 @@
 
     <section id="printReport" class="print-report" aria-hidden="true"></section>
 
-    <script src="/report.js?v=20260623-gifts" type="module"></script>
+    <script src="/report.js?v=20260707-returns" type="module"></script>
   </body>
 </html>

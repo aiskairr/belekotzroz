@@ -12,6 +12,7 @@ export const navigation = [
   { id: 'sales', href: '/sales.html', label: 'Продажи', permission: 'sales' },
   { id: 'debtSale', href: '/debt-sale.html', label: 'Продать в долг', permission: 'debtSale' },
   { id: 'deliveries', href: '/deliveries.html', label: 'Доставки', permission: 'deliveries' },
+  { id: 'attendance', href: '/attendance.html', label: 'Посещаемость', permission: 'attendance' },
   { id: 'reports', href: '/report.html', label: 'Отчетность', permission: 'reports' },
   { id: 'bankCommissions', href: '/bank-commissions.html', label: 'Банковские комиссии', permission: 'bankCommissions' },
   { id: 'expenses', href: '/expenses.html', label: 'Расходы', permission: 'expenses' },
@@ -45,6 +46,12 @@ export async function initCrmShell({ page, allowedRoles }) {
     return null;
   }
 
+  if (isAttendanceBlocked(session.attendance, page)) {
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.replace(`/attendance.html?next=${next}`);
+    return null;
+  }
+
   document.body.dataset.role = user.role;
   document.body.classList.add('crm-page');
   await loadSharedUiSettings();
@@ -52,6 +59,10 @@ export async function initCrmShell({ page, allowedRoles }) {
   renderShell(user, page);
   initMoySkladMonitor(user);
   return user;
+}
+
+function isAttendanceBlocked(attendance, page) {
+  return page !== 'attendance' && attendance?.required && !attendance.allowed;
 }
 
 function renderShell(user, page) {
@@ -62,7 +73,7 @@ function renderShell(user, page) {
     .slice(0, 2)
     .toUpperCase();
   const links = navigation
-    .filter((item) => hasPermission(user, item.permission))
+    .filter((item) => hasPermission(user, item.permission) && shouldShowNavigationItem(user, item))
     .map((item) => `<a class="${item.id === page ? 'active' : ''}" href="${item.href}">${item.label}</a>`)
     .join('');
 
@@ -110,6 +121,7 @@ function renderShell(user, page) {
   });
   document.querySelector('#sharedCrmSettings').addEventListener('click', () => {
     syncSharedSettingsControls();
+    refreshSharedAttendanceWidget(user);
     document.querySelector('#sharedSettingsModal').classList.remove('hidden');
   });
   document.querySelector('#sharedCloseSettings').addEventListener('click', closeSharedSettings);
@@ -119,6 +131,10 @@ function renderShell(user, page) {
   document.querySelector('#sharedCrmLogout').addEventListener('click', async () => {
     await fetch('/api/crm/logout', { method: 'POST' }).catch(() => {});
     window.location.replace('/');
+  });
+  document.querySelector('#sharedCloseShift')?.addEventListener('click', () => {
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/attendance.html?close=1&next=${next}`;
   });
   document.querySelectorAll('[data-shared-theme]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -182,6 +198,11 @@ function renderShell(user, page) {
     persistSharedUiSettings(defaults);
   });
   document.querySelector('#sharedSaveSettings').addEventListener('click', closeSharedSettings);
+}
+
+function shouldShowNavigationItem(user, item) {
+  if (item.id !== 'attendance') return true;
+  return ['admin', 'owner', 'manager'].includes(user?.role);
 }
 
 function shouldShowMoySkladMonitor(user) {
@@ -264,6 +285,14 @@ function renderSettingsModal() {
             <button type="button" data-shared-density="compact">Компактная</button>
           </div>
         </section>
+        <section id="sharedAttendanceSection" class="shared-settings-section">
+          <div><h3>Моя смена</h3><span>Текущее рабочее время и закрытие смены через QR рабочей точки.</span></div>
+          <div class="shared-attendance-widget">
+            <strong id="sharedAttendanceStatus">Загрузка...</strong>
+            <span id="sharedAttendanceTime">0ч 0м</span>
+            <button id="sharedCloseShift" class="shared-secondary-button" type="button">Закрыть смену по QR</button>
+          </div>
+        </section>
         <div class="shared-settings-actions">
           <button id="sharedCrmLogout" class="shared-danger-button" type="button">Выйти из CRM</button>
           <button id="sharedResetSettings" class="shared-secondary-button" type="button">Сбросить</button>
@@ -271,6 +300,34 @@ function renderSettingsModal() {
         </div>
       </div>
     </section>`;
+}
+
+async function refreshSharedAttendanceWidget(user) {
+  const section = document.querySelector('#sharedAttendanceSection');
+  if (!section) return;
+  section.classList.toggle('hidden', !isAttendanceRequiredForUser(user));
+  if (!isAttendanceRequiredForUser(user)) return;
+  try {
+    const response = await fetch('/api/attendance/status');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Не удалось загрузить смену.');
+    const working = data.status === 'working';
+    document.querySelector('#sharedAttendanceStatus').textContent = working ? 'На работе' : 'Смена не открыта';
+    document.querySelector('#sharedAttendanceTime').textContent = working ? formatSharedDuration(data.openRecord?.currentWorkMinutes || 0) : '0ч 0м';
+    document.querySelector('#sharedCloseShift').classList.toggle('hidden', !working);
+  } catch (error) {
+    document.querySelector('#sharedAttendanceStatus').textContent = error.message;
+    document.querySelector('#sharedAttendanceTime').textContent = '';
+  }
+}
+
+function isAttendanceRequiredForUser(user) {
+  return ['manager', 'seller', 'logistics', 'accountant', 'employee'].includes(user?.role);
+}
+
+function formatSharedDuration(minutes) {
+  const value = Math.max(0, Number(minutes) || 0);
+  return `${Math.floor(value / 60)}ч ${value % 60}м`;
 }
 
 function closeSharedSettings() {

@@ -1,3 +1,2 @@
-2026/07/06-18:52:23.926 198 Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/Site Characteristics Database/MANIFEST-000001
-2026/07/06-18:52:23.926 198 Recovering log #3
-2026/07/06-18:52:23.926 198 Reusing old log /app/.sessions/webjs/default/session-default/Default/Site Characteristics Database/000003.log 
+2026/07/14-20:46:34.245 261a Creating DB /app/.sessions/webjs/default/session-default/Default/Site Characteristics Database since it was missing.
+2026/07/14-20:46:34.249 261a Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/Site Characteristics Database/MANIFEST-000001

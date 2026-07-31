@@ -9,6 +9,31 @@ const printReport = document.querySelector('#printReport');
 const documentsTitle = document.querySelector('#documentsTitle');
 const salesTabCount = document.querySelector('#salesTabCount');
 const demandsTabCount = document.querySelector('#demandsTabCount');
+const salesReturnsTabCount = document.querySelector('#salesReturnsTabCount');
+const demandReturnsTabCount = document.querySelector('#demandReturnsTabCount');
+
+const REPORT_TYPES = {
+  retaildemand: {
+    tabTitle: 'Продажи',
+    reportTitle: 'Отчет по продажам',
+    emptyText: 'продаж'
+  },
+  demand: {
+    tabTitle: 'Отгрузки',
+    reportTitle: 'Отчет по отгрузкам',
+    emptyText: 'отгрузок'
+  },
+  retailsalesreturn: {
+    tabTitle: 'Возвраты продаж',
+    reportTitle: 'Отчет по возвратам продаж',
+    emptyText: 'возвратов продаж'
+  },
+  salesreturn: {
+    tabTitle: 'Возвраты отгрузок',
+    reportTitle: 'Отчет по возвратам отгрузок',
+    emptyText: 'возвратов отгрузок'
+  }
+};
 
 const els = {
   dateFrom: document.querySelector('#dateFrom'),
@@ -130,11 +155,13 @@ function renderReport(report) {
   const rows = allRows.filter((row) => row.type === currentDocumentType);
   salesTabCount.textContent = formatNumber(allRows.filter((row) => row.type === 'retaildemand').length);
   demandsTabCount.textContent = formatNumber(allRows.filter((row) => row.type === 'demand').length);
-  documentsTitle.textContent = currentDocumentType === 'demand' ? 'Отгрузки' : 'Продажи';
+  salesReturnsTabCount.textContent = formatNumber(allRows.filter((row) => row.type === 'retailsalesreturn').length);
+  demandReturnsTabCount.textContent = formatNumber(allRows.filter((row) => row.type === 'salesreturn').length);
+  documentsTitle.textContent = getCurrentTabTitle();
   renderTotals(calculateVisibleTotals(rows));
 
   if (!rows.length) {
-    reportRows.innerHTML = `<div class="empty-state">За этот период ${currentDocumentType === 'demand' ? 'отгрузок' : 'продаж'} нет.</div>`;
+    reportRows.innerHTML = `<div class="empty-state">За этот период ${getCurrentEmptyText()} нет.</div>`;
     return;
   }
 
@@ -178,6 +205,7 @@ function renderDocumentGroup(row) {
   const products = Array.isArray(row.products) && row.products.length
     ? row.products
     : [{ code: '', name: row.productText || 'Товар', quantity: 1, price: row.amount, sum: row.amount }];
+  const returnAllowed = canCreateReturn(row);
 
   return `
     <article class="document-card">
@@ -234,7 +262,7 @@ function renderDocumentGroup(row) {
               <th>Цена</th>
               <th>Кол-во</th>
               <th>Сумма</th>
-              <th>Возврат</th>
+              ${returnAllowed ? '<th>Возврат</th>' : ''}
             </tr>
           </thead>
           <tbody>
@@ -245,9 +273,9 @@ function renderDocumentGroup(row) {
                 <td class="num">${product.isGift ? '<strong class="gift-label">Подарок</strong>' : formatSom(product.price)}</td>
                 <td class="num">${formatQuantity(product.quantity)}</td>
                 <td class="num">${formatSom(product.sum)}</td>
-                <td class="return-cell">
+                ${returnAllowed ? `<td class="return-cell">
                   <button type="button" data-return-product data-document-id="${escapeHtml(row.id)}" data-product-index="${escapeHtml(String(product.index ?? 0))}">Возврат</button>
-                </td>
+                </td>` : ''}
               </tr>
             `).join('')}
           </tbody>
@@ -255,11 +283,15 @@ function renderDocumentGroup(row) {
       </div>
       <footer class="document-actions">
         ${row.webUrl ? `<a href="${escapeHtml(row.webUrl)}" target="_blank" rel="noopener">Перейти к документу</a>` : ''}
-        <button type="button" data-print-receipt="${escapeHtml(row.id)}">Распечатать товарный чек</button>
-        <button type="button" data-print-waybill="${escapeHtml(row.id)}">Распечатать товарную накладную</button>
+        ${returnAllowed ? `<button type="button" data-print-receipt="${escapeHtml(row.id)}">Распечатать товарный чек</button>
+        <button type="button" data-print-waybill="${escapeHtml(row.id)}">Распечатать товарную накладную</button>` : ''}
       </footer>
     </article>
   `;
+}
+
+function canCreateReturn(row) {
+  return row?.type === 'retaildemand' || row?.type === 'demand';
 }
 
 async function createReturn(row, product, button) {
@@ -413,7 +445,15 @@ function calculateVisibleTotals(rows) {
 }
 
 function getCurrentTypeLabel() {
-  return currentDocumentType === 'demand' ? 'Отчет по отгрузкам' : 'Отчет по продажам';
+  return REPORT_TYPES[currentDocumentType]?.reportTitle || 'Отчет по документам';
+}
+
+function getCurrentTabTitle() {
+  return REPORT_TYPES[currentDocumentType]?.tabTitle || 'Документы';
+}
+
+function getCurrentEmptyText() {
+  return REPORT_TYPES[currentDocumentType]?.emptyText || 'документов';
 }
 
 function renderPrintWaybill(row) {

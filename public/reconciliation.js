@@ -84,7 +84,7 @@ function renderRows() {
           <span>${escapeHtml(debtor.actualAddress || 'Адрес не указан')}</span>
         </div>
       </td>
-      <td><span class="type-badge ${debtor.customerType === 'legal' ? 'legal' : ''}">${escapeHtml(debtor.customerTypeLabel || 'Клиент')}</span></td>
+      <td><span class="type-badge ${getTypeBadgeClass(debtor.customerType)}">${escapeHtml(debtor.customerTypeLabel || 'Клиент')}</span></td>
       <td>${escapeHtml([debtor.phone, debtor.inn].filter(Boolean).join(' / ') || '-')}</td>
       <td>
         <strong>${escapeHtml(debtor.lastDocumentName || '-')}</strong>
@@ -234,6 +234,12 @@ function renderPayment(payment) {
 
 function closeModal() {
   els.debtorModal.classList.add('hidden');
+}
+
+function getTypeBadgeClass(type) {
+  if (type === 'legal') return 'legal';
+  if (type === 'entrepreneur') return 'entrepreneur';
+  return '';
 }
 
 async function api(url) {

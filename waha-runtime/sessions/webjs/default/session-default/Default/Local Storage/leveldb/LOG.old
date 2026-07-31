@@ -1,3 +1,2 @@
-2026/07/06-18:52:23.933 1be Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/Local Storage/leveldb/MANIFEST-000001
-2026/07/06-18:52:23.957 1be Recovering log #3
-2026/07/06-18:52:23.958 1be Reusing old log /app/.sessions/webjs/default/session-default/Default/Local Storage/leveldb/000003.log 
+2026/07/14-20:46:34.260 2639 Creating DB /app/.sessions/webjs/default/session-default/Default/Local Storage/leveldb since it was missing.
+2026/07/14-20:46:34.291 2639 Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/Local Storage/leveldb/MANIFEST-000001

@@ -120,7 +120,7 @@ h1 {
 
 .report-type-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 240px));
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -856,6 +856,10 @@ td.num {
     flex-direction: column;
   }
 
+  .report-type-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .filters,
   .total-grid {
     grid-template-columns: 1fr;
@@ -868,6 +872,10 @@ td.num {
 }
 
 @media (max-width: 620px) {
+  .report-type-tabs {
+    grid-template-columns: 1fr;
+  }
+
   .document-card-head,
   .document-meta {
     grid-template-columns: 1fr;
@@ -880,17 +888,70 @@ td.num {
 }
 
 @media print {
+  html,
+  body,
+  body.crm-page {
+    width: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    padding: 0 !important;
+  }
+
   body > *:not(.print-report) {
     display: none !important;
   }
 
   .print-report {
-    display: block;
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-sheet {
+    width: 100% !important;
+    margin: 0 !important;
+  }
+
+  .print-sheet h1 {
+    margin-top: 0 !important;
+  }
+
+  .print-sheet table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: fixed;
+    font-size: 8.5px;
+  }
+
+  .print-sheet thead {
+    display: table-row-group;
+  }
+
+  .print-sheet th,
+  .print-sheet td {
+    padding: 4px 3px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.15;
+  }
+
+  .print-payment-summary {
+    margin-bottom: 8px;
+    font-size: 10px;
+  }
+
+  .print-payment-summary h2,
+  .print-payment-summary p {
+    padding: 4px 6px;
   }
 
   @page {
-    margin: 8mm;
-    size: A4 portrait;
+    margin: 7mm;
+    size: A4 landscape;
   }
 }
 

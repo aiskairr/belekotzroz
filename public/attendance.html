@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Посещаемость</title>
+    <link rel="stylesheet" href="/attendance.css">
+    <link rel="stylesheet" href="/crm-shell.css?v=20260706-unified-sidebar">
+  </head>
+  <body>
+    <main id="attendanceApp" class="attendance-app hidden">
+      <section class="attendance-hero">
+        <div>
+          <p id="attendanceHeroEyebrow" class="eyebrow">QR отметка</p>
+          <h1 id="attendanceHeroTitle">Приход и уход</h1>
+          <p id="attendanceHeroText">Сканируйте QR рабочей точки и разрешите геолокацию. Радиус проверки задается для каждой точки.</p>
+        </div>
+        <div id="statusCard" class="status-card">
+          <span>Текущий статус</span>
+          <strong id="workStatus">Загрузка...</strong>
+          <small id="workTimer">00:00</small>
+        </div>
+      </section>
+
+      <section class="scan-card">
+        <div>
+          <p class="eyebrow">Доступ к системе</p>
+          <h2>Сканируйте QR на рабочей точке</h2>
+          <p id="scanHint">После успешного сканирования и проверки геолокации система откроется автоматически.</p>
+        </div>
+        <div id="cameraPanel" class="camera-panel">
+          <video id="qrVideo" playsinline muted></video>
+          <div class="camera-frame" aria-hidden="true"></div>
+        </div>
+        <label>
+          <span>QR token</span>
+          <input id="qrTokenInput" placeholder="Token из QR" autocomplete="off">
+        </label>
+        <div class="scan-actions">
+          <button id="startCameraButton" type="button">Открыть камеру</button>
+          <button id="scanButton" type="button">Отметить вручную</button>
+        </div>
+        <p id="scanStatus" class="status"></p>
+      </section>
+
+      <section id="managerPanel" class="manager-grid">
+        <div class="report-card">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Отчеты</p>
+              <h2>Посещаемость сотрудников</h2>
+            </div>
+            <button id="exportButton" class="secondary" type="button">Экспорт CSV</button>
+          </div>
+          <form id="filtersForm" class="filters">
+            <label><span>С даты</span><input id="dateFrom" type="date"></label>
+            <label><span>По дату</span><input id="dateTo" type="date"></label>
+            <label><span>Сотрудник</span><select id="userFilter"></select></label>
+            <label><span>Точка</span><select id="storeFilter"></select></label>
+            <button type="submit">Показать</button>
+          </form>
+          <div class="totals">
+            <div><span>Записей</span><strong id="totalRecords">0</strong></div>
+            <div><span>На работе</span><strong id="totalOpen">0</strong></div>
+            <div><span>Отработано</span><strong id="totalTime">0ч 0м</strong></div>
+            <div><span>Ошибок</span><strong id="totalFailed">0</strong></div>
+          </div>
+          <div id="recordsList" class="records-list"></div>
+        </div>
+
+        <aside id="adminPanel" class="stores-card hidden">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Админ</p>
+              <h2>Настройки посещаемости</h2>
+            </div>
+            <button id="openStoreModalButton" type="button">Добавить точку</button>
+          </div>
+          <form id="adminOpenShiftForm" class="admin-open-shift">
+            <label><span>Открыть смену сотруднику</span><select id="adminOpenUser"></select></label>
+            <label><span>Точка</span><select id="adminOpenStore"></select></label>
+            <button class="secondary" type="submit">Открыть без учета часов</button>
+          </form>
+          <div id="storesList" class="stores-list"></div>
+        </aside>
+      </section>
+    </main>
+
+    <section id="storeModal" class="attendance-modal hidden" aria-modal="true" role="dialog">
+      <form id="storeForm" class="store-form attendance-modal-card">
+        <div class="section-head">
+          <div><p class="eyebrow">Рабочая точка</p><h2 id="storeModalTitle">Новая точка</h2></div>
+          <button id="closeStoreModalButton" class="secondary" type="button">Закрыть</button>
+        </div>
+        <input id="storeId" type="hidden">
+        <label><span>Название</span><input id="storeName" required></label>
+        <label><span>Филиал</span><select id="storeBranch"><option value="ayu">Аю-Гранд</option><option value="besh">Беш-Сары</option></select></label>
+        <label><span>Адрес</span><input id="storeAddress"></label>
+        <label><span>Latitude</span><input id="storeLatitude" type="number" step="0.0000001" required></label>
+        <label><span>Longitude</span><input id="storeLongitude" type="number" step="0.0000001" required></label>
+        <label><span>Радиус, м</span><input id="storeRadius" type="number" min="1" step="1" value="10"></label>
+        <button id="useCurrentLocationButton" class="secondary" type="button">Взять мои координаты</button>
+        <button type="submit">Сохранить точку</button>
+      </form>
+    </section>
+
+    <script src="/attendance.js" type="module"></script>
+  </body>
+</html>

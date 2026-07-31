@@ -1449,6 +1449,10 @@ body.density-compact .compact-summary { padding: 9px 11px; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #e7ebf0; padding-top: 18px; }
 .settings-actions button { grid-column: auto; min-width: 130px; }
 .settings-actions .danger-button { margin-right: auto; background: #fff1f0 !important; color: #b42318; border: 1px solid #f3c6c2; }
+.attendance-settings-widget { display: grid; gap: 8px; border: 1px solid #dce4ef; border-radius: 8px; background: #f8fafc; padding: 14px; }
+.attendance-settings-widget strong { color: #172033; font-size: 18px; }
+.attendance-settings-widget > span { color: var(--crm-accent-dark); font-size: 24px; font-weight: 900; }
+.attendance-settings-widget button { width: 100%; }
 
 body[data-mode="dark"] .crm-topbar { border-bottom-color: #233042; background: #111827; }
 body[data-mode="dark"] .crm-topbar > span,
@@ -1472,6 +1476,8 @@ body[data-mode="dark"] .panel,
 body[data-mode="dark"] .summary,
 body[data-mode="dark"] .crm-overview,
 body[data-mode="dark"] .modal-card { background: #111827; color: #e5edf7; border-color: #233042; box-shadow: 0 18px 50px rgba(2,6,23,.35); }
+body[data-mode="dark"] .attendance-settings-widget { background: #0f172a; border-color: #344256; }
+body[data-mode="dark"] .attendance-settings-widget strong { color: #f8fafc; }
 body[data-mode="dark"] .fiscal-status-card { border-color: #314155; background: #0f172a; }
 body[data-mode="dark"] .fiscal-status-card.ready { border-color: #166534; background: #0d1f16; }
 body[data-mode="dark"] .fiscal-status-card.warning { border-color: #9a3412; background: #2a1b12; }

@@ -1,3 +1,2 @@
-2026/07/06-18:52:25.307 198 Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/Extension State/MANIFEST-000001
-2026/07/06-18:52:25.308 198 Recovering log #3
-2026/07/06-18:52:25.309 198 Reusing old log /app/.sessions/webjs/default/session-default/Default/Extension State/000003.log 
+2026/07/14-20:46:35.325 2612 Creating DB /app/.sessions/webjs/default/session-default/Default/Extension State since it was missing.
+2026/07/14-20:46:35.327 2612 Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/Extension State/MANIFEST-000001

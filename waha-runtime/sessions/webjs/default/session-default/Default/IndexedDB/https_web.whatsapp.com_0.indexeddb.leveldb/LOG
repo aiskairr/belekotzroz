@@ -1,3 +1,6 @@
-2026/07/06-19:29:21.198 1fe Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/07/06-19:29:21.200 1fe Recovering log #117
-2026/07/06-19:29:21.213 1fe Reusing old log /app/.sessions/webjs/default/session-default/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000117.log 
+2026/07/14-20:57:35.712 6c Reusing MANIFEST /app/.sessions/webjs/default/session-default/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/07/14-20:57:35.713 6c Recovering log #70
+2026/07/14-20:57:35.731 6c Reusing old log /app/.sessions/webjs/default/session-default/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000070.log 
+2026/07/14-20:57:35.739 6c Delete type=2 #71
+2026/07/14-20:57:35.740 6c Delete type=2 #67
+2026/07/14-20:57:35.740 6c Delete type=2 #68
