@@ -5138,7 +5138,7 @@ async function serveStatic(url, res) {
   const pathname = typeof url === 'string' ? url : url.pathname;
   const requestedVersion = typeof url === 'string' ? '' : String(url.searchParams.get('v') || '');
   const safePath = pathname === '/'
-    ? '/about.html'
+    ? '/continue/index.html'
     : pathname === '/sales.html' || pathname === '/debt-sale.html'
       ? '/index.html'
       : pathname;
